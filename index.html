@@ -6,6 +6,9 @@
     <title>MCMarket - Minecraft Content Marketplace</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Supabase Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         /* ============================================
            MCMarket - Minecraft Content Marketplace
@@ -209,160 +212,190 @@
     <div id="app"></div>
 
     <script>
-        // ============ ADMIN CONFIG ============
+        // ============ SUPABASE CONFIG ============
+        const SUPABASE_URL = 'https://lrjyxbwwqenczqucdtgc.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxyanl4Ynd3cWVuY3pxdWNkdGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNDIzMTQsImV4cCI6MjA4MjYxODMxNH0.j_r0DuYk8HlX-uCxU1hxDCkGYKjBK2dKIIvEObHTefQ';
+        
+        // Supabase Client initialisieren
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // Admin E-Mail (Passwort ist sicher in Supabase gespeichert)
         const ADMIN_EMAIL = 'admin@mcmarket.de';
-        const ADMIN_PASSWORD = 'admin123';
 
-        // ============ DATABASE SIMULATION ============
+        // ============ DATABASE (Supabase + LocalStorage Fallback) ============
         const DB = {
-            init() {
-                if (!localStorage.getItem('mcmarket_init_v6')) {
-                    localStorage.removeItem('mcmarket_init_v5');
-                    localStorage.removeItem('mcmarket_init_v4');
-                    localStorage.removeItem('mcmarket_init_v3');
-                    localStorage.removeItem('mcmarket_users');
-                    localStorage.removeItem('mcmarket_content');
-                    localStorage.removeItem('mcmarket_purchases');
-                    localStorage.removeItem('mcmarket_transactions');
-                    localStorage.removeItem('mcmarket_settings');
-                    localStorage.removeItem('mcmarket_files');
-                    localStorage.removeItem('mcmarket_images');
-
-                    const adminUser = {
-                        id: 'admin_001',
-                        username: 'SuperAdmin',
-                        email: ADMIN_EMAIL,
-                        password: ADMIN_PASSWORD,
-                        role: 'admin',
-                        tokens: Infinity,
-                        isMainAdmin: true,
-                        lastTokenClaim: null,
-                        permissions: { 
-                            canUpload: true, canSell: true, canView: true, canEarnTokens: true,
-                            canManageUsers: true, canManageContent: true, canManageSettings: true,
-                            canGiveTokens: true, isUnlimited: true
-                        },
-                        settings: {
-                            theme: 'dark',
-                            notifications: true,
-                            emailNotifications: false,
-                            language: 'de'
-                        },
-                        createdAt: new Date().toISOString()
-                    };
-
-                    localStorage.setItem('mcmarket_users', JSON.stringify([adminUser]));
-                    localStorage.setItem('mcmarket_content', JSON.stringify([]));
-                    localStorage.setItem('mcmarket_files', JSON.stringify({}));
-                    localStorage.setItem('mcmarket_images', JSON.stringify({}));
-                    localStorage.setItem('mcmarket_purchases', JSON.stringify([]));
-                    localStorage.setItem('mcmarket_transactions', JSON.stringify([]));
-
-                    const settings = {
-                        tokenInterval: 'daily',
-                        tokenAmount: 10,
-                        uploadsEnabled: true,
-                        salesEnabled: true,
-                        tokenSystemEnabled: true,
-                        requireApproval: true,
-                        marketplaceEnabled: true,
-                        registrationEnabled: true,
-                        maintenanceMode: false,
-                        welcomeTokens: 50,
-                        maxFileSize: 5,
-                        defaultUserPermissions: { canUpload: false, canSell: false, canView: true, canEarnTokens: true },
-                        defaultCreatorPermissions: { canUpload: true, canSell: true, canView: true, canEarnTokens: true }
-                    };
-                    localStorage.setItem('mcmarket_settings', JSON.stringify(settings));
-                    localStorage.setItem('mcmarket_init_v6', 'true');
+            async init() {
+                // Prüfe ob User eingeloggt ist
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session && session.user) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('id', session.user.id)
+                        .single();
+                    if (profile) {
+                        currentUserData = profile;
+                    }
+                }
+                
+                // Settings aus Supabase laden
+                const { data: settings } = await supabase
+                    .from('settings')
+                    .select('*')
+                    .eq('id', 1)
+                    .single();
+                
+                if (settings) {
+                    cachedSettings = settings;
                 }
             },
             
-            getFiles() { return JSON.parse(localStorage.getItem('mcmarket_files') || '{}'); },
-            setFiles(files) { localStorage.setItem('mcmarket_files', JSON.stringify(files)); },
-            
-            getImages() { return JSON.parse(localStorage.getItem('mcmarket_images') || '{}'); },
-            setImages(images) { localStorage.setItem('mcmarket_images', JSON.stringify(images)); },
-            
-            saveFile(contentId, fileData) {
-                const files = this.getFiles();
-                files[contentId] = fileData;
-                this.setFiles(files);
+            // File Storage mit Supabase
+            async saveFile(contentId, file) {
+                const fileName = `${contentId}_${file.name}`;
+                const { data, error } = await supabase.storage
+                    .from('content-files')
+                    .upload(fileName, file, { upsert: true });
+                
+                if (error) {
+                    console.error('File upload error:', error);
+                    // Fallback zu localStorage
+                    const files = JSON.parse(localStorage.getItem('mcmarket_files') || '{}');
+                    files[contentId] = { name: file.name, size: file.size, type: file.type };
+                    localStorage.setItem('mcmarket_files', JSON.stringify(files));
+                }
+                return data;
             },
             
-            saveImage(contentId, imageData) {
-                const images = this.getImages();
+            async saveImage(contentId, imageData) {
+                // Bilder in localStorage speichern (für Preview)
+                const images = JSON.parse(localStorage.getItem('mcmarket_images') || '{}');
                 images[contentId] = imageData;
-                this.setImages(images);
+                localStorage.setItem('mcmarket_images', JSON.stringify(images));
             },
             
             getFile(contentId) {
-                return this.getFiles()[contentId] || null;
+                return JSON.parse(localStorage.getItem('mcmarket_files') || '{}')[contentId] || null;
             },
             
             getImage(contentId) {
-                return this.getImages()[contentId] || null;
+                return JSON.parse(localStorage.getItem('mcmarket_images') || '{}')[contentId] || null;
             },
 
-            getUsers() { 
-                const users = JSON.parse(localStorage.getItem('mcmarket_users') || '[]');
-                return users.map(u => {
-                    if (u.email === ADMIN_EMAIL) {
-                        u.tokens = Infinity;
-                        u.permissions.isUnlimited = true;
-                    }
-                    if (!u.settings) {
-                        u.settings = { theme: 'dark', notifications: true, emailNotifications: false, language: 'de' };
-                    }
-                    return u;
-                });
-            },
-            setUsers(users) { 
-                users = users.map(u => {
-                    if (u.email === ADMIN_EMAIL) u.tokens = Infinity;
-                    return u;
-                });
-                localStorage.setItem('mcmarket_users', JSON.stringify(users)); 
+            async getUsers() { 
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('*');
+                return data || [];
             },
             
-            getContent() { return JSON.parse(localStorage.getItem('mcmarket_content') || '[]'); },
-            setContent(content) { localStorage.setItem('mcmarket_content', JSON.stringify(content)); },
+            async getContent() { 
+                const { data, error } = await supabase
+                    .from('content')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                return (data || []).map(c => ({
+                    ...c,
+                    uploaderId: c.uploader_id,
+                    uploaderName: c.uploader_name,
+                    mcVersions: c.mc_versions,
+                    fileName: c.file_name,
+                    fileSize: c.file_size,
+                    createdAt: c.created_at
+                }));
+            },
             
-            getPurchases() { return JSON.parse(localStorage.getItem('mcmarket_purchases') || '[]'); },
-            setPurchases(purchases) { localStorage.setItem('mcmarket_purchases', JSON.stringify(purchases)); },
+            async setContent(content) {
+                // Für einzelne Updates
+            },
             
-            getTransactions() { return JSON.parse(localStorage.getItem('mcmarket_transactions') || '[]'); },
-            setTransactions(trans) { localStorage.setItem('mcmarket_transactions', JSON.stringify(trans)); },
+            async getPurchases() { 
+                const user = await this.getCurrentUser();
+                if (!user) return [];
+                
+                const { data } = await supabase
+                    .from('purchases')
+                    .select('*')
+                    .eq('user_id', user.id);
+                
+                return (data || []).map(p => ({
+                    ...p,
+                    contentId: p.content_id,
+                    userId: p.user_id,
+                    date: p.created_at
+                }));
+            },
             
-            getSettings() { return JSON.parse(localStorage.getItem('mcmarket_settings') || '{}'); },
-            setSettings(settings) { localStorage.setItem('mcmarket_settings', JSON.stringify(settings)); },
+            async getTransactions() { 
+                const user = await this.getCurrentUser();
+                if (!user) return [];
+                
+                const { data } = await supabase
+                    .from('transactions')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('created_at', { ascending: false });
+                
+                return (data || []).map(t => ({
+                    ...t,
+                    userId: t.user_id,
+                    date: t.created_at
+                }));
+            },
+            
+            getSettings() { 
+                return cachedSettings || {
+                    tokenInterval: 'daily',
+                    tokenAmount: 10,
+                    uploadsEnabled: true,
+                    salesEnabled: true,
+                    tokenSystemEnabled: true,
+                    requireApproval: true,
+                    registrationEnabled: true,
+                    maintenanceMode: false,
+                    welcomeTokens: 50
+                };
+            },
 
-            getCurrentUser() { 
-                const userId = sessionStorage.getItem('mcmarket_currentUser');
-                if (!userId) return null;
-                const users = this.getUsers();
-                const user = users.find(u => u.id === userId);
-                if (user && user.email === ADMIN_EMAIL) user.tokens = Infinity;
-                return user;
+            async getCurrentUser() { 
+                if (currentUserData) return currentUserData;
+                
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) return null;
+                
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('id', session.user.id)
+                    .single();
+                
+                if (profile) {
+                    currentUserData = profile;
+                    // Check if admin
+                    if (profile.role === 'admin') {
+                        currentUserData.tokens = Infinity;
+                        currentUserData.isMainAdmin = true;
+                    }
+                }
+                return currentUserData;
             },
-            setCurrentUser(userId) { sessionStorage.setItem('mcmarket_currentUser', userId); },
-            logout() { sessionStorage.removeItem('mcmarket_currentUser'); },
 
             isAdmin(user) {
-                return user && (user.role === 'admin' || user.email === ADMIN_EMAIL);
+                return user && (user.role === 'admin');
             },
             
-            updateUserSettings(userId, newSettings) {
-                const users = this.getUsers();
-                const idx = users.findIndex(u => u.id === userId);
-                if (idx !== -1) {
-                    users[idx].settings = { ...users[idx].settings, ...newSettings };
-                    this.setUsers(users);
-                    return true;
-                }
-                return false;
+            async updateUserSettings(userId, newSettings) {
+                const { error } = await supabase
+                    .from('profiles')
+                    .update({ settings: newSettings })
+                    .eq('id', userId);
+                return !error;
             }
         };
+        
+        // Cache für Settings
+        let cachedSettings = null;
 
         // ============ APP STATE ============
         let currentView = 'login';
@@ -438,66 +471,118 @@
 
         // ============ AUTH FUNCTIONS ============
         const Auth = {
-            login(email, password) {
-                const users = DB.getUsers();
-                const user = users.find(u => u.email === email && u.password === password);
-                if (user) {
-                    DB.setCurrentUser(user.id);
-                    return user;
+            async login(email, password) {
+                try {
+                    const { data, error } = await supabase.auth.signInWithPassword({
+                        email: email,
+                        password: password
+                    });
+                    
+                    if (error) {
+                        console.error('Login error:', error);
+                        return null;
+                    }
+                    
+                    if (data.user) {
+                        // Profil aus Datenbank laden
+                        const { data: profile, error: profileError } = await supabase
+                            .from('profiles')
+                            .select('*')
+                            .eq('id', data.user.id)
+                            .single();
+                        
+                        if (profile) {
+                            currentUserData = profile;
+                            return profile;
+                        }
+                    }
+                    return null;
+                } catch (e) {
+                    console.error('Login exception:', e);
+                    return null;
                 }
-                return null;
             },
 
-            register(username, email, password) {
-                const users = DB.getUsers();
-                const settings = DB.getSettings();
-                if (!settings.registrationEnabled) return { error: 'Registrierung deaktiviert' };
-                if (users.find(u => u.email === email)) return { error: 'E-Mail bereits registriert' };
-
-                const newUser = {
-                    id: Utils.generateId(),
-                    username, email, password,
-                    role: 'user',
-                    tokens: settings.welcomeTokens || 50,
-                    isMainAdmin: false,
-                    lastTokenClaim: null,
-                    permissions: { ...settings.defaultUserPermissions },
-                    settings: { theme: 'dark', notifications: true, emailNotifications: false, language: 'de' },
-                    createdAt: new Date().toISOString()
-                };
-
-                users.push(newUser);
-                DB.setUsers(users);
-                DB.setCurrentUser(newUser.id);
-                return { success: true, user: newUser };
+            async register(username, email, password) {
+                try {
+                    const settings = DB.getSettings();
+                    if (!settings.registrationEnabled) return { error: 'Registrierung deaktiviert' };
+                    
+                    const { data, error } = await supabase.auth.signUp({
+                        email: email,
+                        password: password,
+                        options: {
+                            data: {
+                                username: username
+                            }
+                        }
+                    });
+                    
+                    if (error) {
+                        console.error('Register error:', error);
+                        return { error: error.message };
+                    }
+                    
+                    if (data.user) {
+                        // Warten bis Profil erstellt wurde
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        const { data: profile } = await supabase
+                            .from('profiles')
+                            .select('*')
+                            .eq('id', data.user.id)
+                            .single();
+                        
+                        if (profile) {
+                            currentUserData = profile;
+                            return { success: true, user: profile };
+                        }
+                    }
+                    
+                    return { success: true, user: data.user };
+                } catch (e) {
+                    console.error('Register exception:', e);
+                    return { error: e.message };
+                }
             },
 
-            claimTokens() {
-                const user = DB.getCurrentUser();
+            async logout() {
+                await supabase.auth.signOut();
+                currentUserData = null;
+            },
+
+            async claimTokens() {
+                const user = await DB.getCurrentUser();
                 if (!user || DB.isAdmin(user)) return false;
                 if (!Utils.canClaimTokens(user)) return false;
 
                 const settings = DB.getSettings();
-                const users = DB.getUsers();
-                const idx = users.findIndex(u => u.id === user.id);
+                const newTokens = user.tokens + settings.tokenAmount;
                 
-                users[idx].tokens += settings.tokenAmount;
-                users[idx].lastTokenClaim = new Date().toISOString();
-                DB.setUsers(users);
-
-                const transactions = DB.getTransactions();
-                transactions.push({
-                    id: Utils.generateId(),
-                    userId: user.id,
-                    type: 'earn',
-                    amount: settings.tokenAmount,
-                    description: `Token-Belohnung (${settings.tokenInterval})`,
-                    date: new Date().toISOString()
-                });
-                DB.setTransactions(transactions);
-                return true;
+                const { error } = await supabase
+                    .from('profiles')
+                    .update({ 
+                        tokens: newTokens,
+                        last_token_claim: new Date().toISOString()
+                    })
+                    .eq('id', user.id);
+                
+                if (!error) {
+                    // Transaktion speichern
+                    await supabase.from('transactions').insert({
+                        user_id: user.id,
+                        type: 'earn',
+                        amount: settings.tokenAmount,
+                        description: `Token-Belohnung (${settings.tokenInterval})`
+                    });
+                    return true;
+                }
+                return false;
             }
         };
+        
+        // Globale Variable für aktuellen User
+        let currentUserData = null;
 
         // ============ CONTENT FUNCTIONS ============
         const Content = {
@@ -2034,21 +2119,24 @@
             document.getElementById('registerForm').classList.toggle('hidden', tab !== 'register');
         }
 
-        function handleLogin(e) {
+        async function handleLogin(e) {
             e.preventDefault();
             const email = document.getElementById('loginEmail').value.trim().toLowerCase();
             const password = document.getElementById('loginPassword').value;
-            const user = Auth.login(email, password);
+            
+            Utils.showToast('Anmelden...', 'info');
+            
+            const user = await Auth.login(email, password);
             if (user) {
                 Utils.showToast(`Willkommen, ${user.username}!`);
                 currentView = 'marketplace';
-                Render.app();
+                await initApp();
             } else {
                 Utils.showToast('Ungültige Anmeldedaten', 'error');
             }
         }
 
-        function handleRegister(e) {
+        async function handleRegister(e) {
             e.preventDefault();
             const username = document.getElementById('regUsername').value.trim();
             const email = document.getElementById('regEmail').value.trim().toLowerCase();
@@ -2057,20 +2145,23 @@
                 Utils.showToast('Bitte AGB akzeptieren', 'error');
                 return;
             }
-            const result = Auth.register(username, email, password);
+            
+            Utils.showToast('Registrieren...', 'info');
+            
+            const result = await Auth.register(username, email, password);
             if (result.success) {
                 Utils.showToast('Willkommen! +' + DB.getSettings().welcomeTokens + ' Tokens');
                 currentView = 'marketplace';
-                Render.app();
+                await initApp();
             } else {
                 Utils.showToast(result.error, 'error');
             }
         }
 
-        function handleLogout() {
-            DB.logout();
+        async function handleLogout() {
+            await Auth.logout();
             currentView = 'login';
-            Render.app();
+            await initApp();
             Utils.showToast('Abgemeldet', 'info');
         }
 
@@ -2507,8 +2598,21 @@
         };
 
         // ============ INIT ============
-        DB.init();
-        Render.app();
+        async function initApp() {
+            await DB.init();
+            const user = await DB.getCurrentUser();
+            
+            if (user) {
+                currentView = 'marketplace';
+            } else {
+                currentView = 'login';
+            }
+            
+            Render.app();
+        }
+        
+        // App starten
+        initApp();
     </script>
 </body>
 </html>
