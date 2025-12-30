@@ -142,6 +142,7 @@
             align-items: center;
             justify-content: center;
             z-index: 9999;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
         }
     </style>
 </head>
@@ -149,6 +150,7 @@
     <div id="loadingScreen">
         <div class="spinner mb-4"></div>
         <p class="text-gray-400">Lade MCMarket...</p>
+        <p id="loadingStatus" class="text-xs text-gray-500 mt-2"></p>
     </div>
     <div id="app"></div>
 
@@ -157,12 +159,15 @@
         const SUPABASE_URL = 'https://lrjyxbwwqenczqucdtgc.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxyanl4Ynd3cWVuY3pxdWNkdGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNDIzMTQsImV4cCI6MjA4MjYxODMxNH0.j_r0DuYk8HlX-uCxU1hxDCkGYKjBK2dKIIvEObHTefQ';
         
-        let supabase;
+        let supabase = null;
+        let supabaseConnected = false;
+        
+        // Versuche Supabase zu initialisieren
         try {
             supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('Supabase Client erstellt');
+            console.log('✅ Supabase Client erstellt');
         } catch (e) {
-            console.error('Supabase Init Fehler:', e);
+            console.error('❌ Supabase Init Fehler:', e);
         }
         
         // Admin E-Mail
@@ -171,12 +176,9 @@
         // ============ GLOBAL STATE ============
         let currentUserData = null;
         let cachedSettings = null;
-        let cachedContent = [];
-        let cachedUsers = [];
         let currentView = 'login';
         let selectedContent = null;
         let filterState = { category: 'all', priceType: 'all', mcVersion: 'all', search: '' };
-        let adminTab = 'overview';
         let uploadedImagePreview = null;
 
         // ============ DEFAULT SETTINGS ============
@@ -192,32 +194,64 @@
             welcomeTokens: 50
         };
 
+        // ============ LOADING STATUS ============
+        function setLoadingStatus(text) {
+            const el = document.getElementById('loadingStatus');
+            if (el) el.textContent = text;
+            console.log('Status:', text);
+        }
+
+        function hideLoading() {
+            const el = document.getElementById('loadingScreen');
+            if (el) el.style.display = 'none';
+        }
+
+        function showError(message) {
+            const el = document.getElementById('loadingScreen');
+            if (el) {
+                el.innerHTML = `
+                    <div class="text-center">
+                        <i class="fas fa-exclamation-triangle text-5xl text-red-500 mb-4"></i>
+                        <p class="text-xl text-red-400">Fehler beim Laden</p>
+                        <p class="text-gray-400 mt-2 max-w-md">${message}</p>
+                        <button onclick="location.reload()" class="mt-4 px-6 py-2 bg-green-600 hover:bg-green-700 rounded-lg">
+                            <i class="fas fa-refresh mr-2"></i>Neu laden
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
         // ============ DATABASE ============
         const DB = {
             async init() {
-                console.log('DB.init() gestartet...');
-                try {
-                    // Settings laden
-                    const { data: settings, error: settingsError } = await supabase
-                        .from('settings')
-                        .select('*')
-                        .eq('id', 1)
-                        .single();
-                    
-                    if (settings) {
-                        cachedSettings = settings;
-                        console.log('Settings geladen:', settings);
-                    } else {
-                        cachedSettings = defaultSettings;
-                        console.log('Default Settings verwendet');
-                    }
+                setLoadingStatus('Verbinde mit Datenbank...');
+                cachedSettings = defaultSettings;
+                
+                if (!supabase) {
+                    console.log('⚠️ Supabase nicht verfügbar, nutze Defaults');
+                    return true;
+                }
 
-                    // Session prüfen
-                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-                    console.log('Session:', session);
+                try {
+                    // Test die Verbindung mit einem Timeout
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Timeout')), 5000)
+                    );
+                    
+                    const sessionPromise = supabase.auth.getSession();
+                    const { data: { session }, error: sessionError } = await Promise.race([sessionPromise, timeoutPromise]);
+                    
+                    if (sessionError) {
+                        console.log('⚠️ Session Fehler:', sessionError);
+                    }
+                    
+                    supabaseConnected = true;
+                    setLoadingStatus('Verbindung hergestellt...');
                     
                     if (session && session.user) {
-                        const { data: profile, error: profileError } = await supabase
+                        setLoadingStatus('Lade Profil...');
+                        const { data: profile } = await supabase
                             .from('profiles')
                             .select('*')
                             .eq('id', session.user.id)
@@ -225,21 +259,35 @@
                         
                         if (profile) {
                             currentUserData = profile;
-                            console.log('Profil geladen:', profile);
-                        } else {
-                            console.log('Kein Profil gefunden');
+                            console.log('✅ Profil geladen:', profile.username);
                         }
+                    }
+                    
+                    // Settings laden
+                    try {
+                        const { data: settings } = await supabase
+                            .from('settings')
+                            .select('*')
+                            .eq('id', 1)
+                            .single();
+                        
+                        if (settings) {
+                            cachedSettings = { ...defaultSettings, ...settings };
+                        }
+                    } catch (e) {
+                        console.log('⚠️ Settings nicht geladen, nutze Defaults');
                     }
                     
                     return true;
                 } catch (e) {
-                    console.error('DB.init() Fehler:', e);
-                    cachedSettings = defaultSettings;
-                    return false;
+                    console.log('⚠️ DB Init Fehler:', e.message);
+                    supabaseConnected = false;
+                    return true; // Trotzdem fortfahren
                 }
             },
             
             async getContent() { 
+                if (!supabase || !supabaseConnected) return [];
                 try {
                     const { data, error } = await supabase
                         .from('content')
@@ -267,19 +315,17 @@
             },
             
             async getUsers() { 
+                if (!supabase || !supabaseConnected) return [];
                 try {
-                    const { data, error } = await supabase
-                        .from('profiles')
-                        .select('*');
+                    const { data } = await supabase.from('profiles').select('*');
                     return data || [];
                 } catch (e) {
-                    console.error('getUsers Fehler:', e);
                     return [];
                 }
             },
             
             async getPurchases() { 
-                if (!currentUserData) return [];
+                if (!currentUserData || !supabase || !supabaseConnected) return [];
                 try {
                     const { data } = await supabase
                         .from('purchases')
@@ -293,13 +339,12 @@
                         date: p.created_at
                     }));
                 } catch (e) {
-                    console.error('getPurchases Fehler:', e);
                     return [];
                 }
             },
             
             async getTransactions() { 
-                if (!currentUserData) return [];
+                if (!currentUserData || !supabase || !supabaseConnected) return [];
                 try {
                     const { data } = await supabase
                         .from('transactions')
@@ -313,7 +358,6 @@
                         date: t.created_at
                     }));
                 } catch (e) {
-                    console.error('getTransactions Fehler:', e);
                     return [];
                 }
             },
@@ -447,6 +491,11 @@
         // ============ AUTH FUNCTIONS ============
         const Auth = {
             async login(email, password) {
+                if (!supabase) {
+                    Utils.showToast('Datenbank nicht verbunden', 'error');
+                    return null;
+                }
+                
                 try {
                     const { data, error } = await supabase.auth.signInWithPassword({
                         email: email,
@@ -478,6 +527,10 @@
             },
 
             async register(username, email, password) {
+                if (!supabase) {
+                    return { error: 'Datenbank nicht verbunden' };
+                }
+                
                 try {
                     const settings = DB.getSettings();
                     if (!settings.registrationEnabled) return { error: 'Registrierung deaktiviert' };
@@ -498,7 +551,8 @@
                     }
                     
                     if (data.user) {
-                        await new Promise(resolve => setTimeout(resolve, 1500));
+                        // Warten bis Profil erstellt wurde (durch Trigger)
+                        await new Promise(resolve => setTimeout(resolve, 2000));
                         
                         const { data: profile } = await supabase
                             .from('profiles')
@@ -520,13 +574,15 @@
             },
 
             async logout() {
-                await supabase.auth.signOut();
+                if (supabase) {
+                    await supabase.auth.signOut();
+                }
                 currentUserData = null;
             },
 
             async claimTokens() {
                 const user = DB.getCurrentUser();
-                if (!user || DB.isAdmin(user)) return false;
+                if (!user || DB.isAdmin(user) || !supabase) return false;
                 if (!Utils.canClaimTokens(user)) return false;
 
                 const settings = DB.getSettings();
@@ -572,7 +628,7 @@
                 const content = allContent.find(c => c.id === contentId);
                 const settings = DB.getSettings();
 
-                if (!user || !content) return false;
+                if (!user || !content || !supabase) return false;
                 
                 if (DB.isAdmin(user)) return true;
                 if (!settings.salesEnabled) return false;
@@ -612,12 +668,12 @@
 
         // ============ RENDER FUNCTIONS ============
         const Render = {
-            async app() {
+            app() {
                 const user = DB.getCurrentUser();
                 const app = document.getElementById('app');
                 const settings = DB.getSettings();
 
-                document.getElementById('loadingScreen').style.display = 'none';
+                hideLoading();
 
                 if (settings.maintenanceMode && (!user || !DB.isAdmin(user))) {
                     app.innerHTML = `
@@ -644,7 +700,7 @@
                     </main>
                     ${this.footer()}
                 `;
-                await this.navigate(currentView);
+                this.navigate(currentView);
             },
 
             navbar() {
@@ -740,6 +796,7 @@
                                 <i class="fas fa-cube text-5xl text-green-500 mb-4"></i>
                                 <h1 class="text-3xl font-bold">MCMarket</h1>
                                 <p class="text-gray-400 mt-2">Minecraft Content Marketplace</p>
+                                ${!supabaseConnected ? '<p class="text-yellow-400 text-sm mt-2"><i class="fas fa-exclamation-triangle mr-1"></i>Offline-Modus</p>' : ''}
                             </div>
                             
                             <div class="flex mb-6 bg-gray-700/50 rounded-lg p-1">
@@ -1529,7 +1586,7 @@
             if (user) {
                 Utils.showToast(`Willkommen, ${user.username || 'User'}!`);
                 currentView = 'marketplace';
-                await Render.app();
+                Render.app();
             } else {
                 Utils.showToast('Ungültige Anmeldedaten', 'error');
             }
@@ -1552,7 +1609,7 @@
             if (result.success) {
                 Utils.showToast('Willkommen! Account erstellt.');
                 currentView = 'marketplace';
-                await Render.app();
+                Render.app();
             } else {
                 Utils.showToast(result.error || 'Registrierung fehlgeschlagen', 'error');
             }
@@ -1561,7 +1618,7 @@
         async function handleLogout() {
             await Auth.logout();
             currentView = 'login';
-            await Render.app();
+            Render.app();
             Utils.showToast('Abgemeldet', 'info');
         }
 
@@ -1569,7 +1626,7 @@
             const success = await Auth.claimTokens();
             if (success) {
                 Utils.showToast(`+${DB.getSettings().tokenAmount} Tokens!`);
-                await Render.app();
+                Render.app();
             } else {
                 Utils.showToast('Tokens noch nicht verfügbar', 'error');
             }
@@ -1589,7 +1646,7 @@
             const result = await Content.purchase(id);
             if (result === true) {
                 Utils.showToast('Erfolgreich gekauft!');
-                await Render.app();
+                Render.app();
                 await Render.navigate('content-detail');
             } else if (result === 'already') {
                 Utils.showToast('Bereits gekauft', 'info');
@@ -1609,9 +1666,11 @@
             }
 
             // Download erhöhen
-            await supabase.from('content').update({ 
-                downloads: (item.downloads || 0) + 1 
-            }).eq('id', id);
+            if (supabase && supabaseConnected) {
+                await supabase.from('content').update({ 
+                    downloads: (item.downloads || 0) + 1 
+                }).eq('id', id);
+            }
 
             const savedFile = DB.getFile(id);
             if (savedFile && savedFile.data) {
@@ -1645,6 +1704,12 @@
 
         async function handleUpload(e) {
             e.preventDefault();
+            
+            if (!supabase || !supabaseConnected) {
+                Utils.showToast('Datenbank nicht verbunden', 'error');
+                return;
+            }
+            
             const title = document.getElementById('uploadTitle').value.trim();
             const description = document.getElementById('uploadDesc').value.trim();
             const category = document.getElementById('uploadCategory').value;
@@ -1715,6 +1780,7 @@
 
         // ============ ADMIN FUNCTIONS ============
         async function adminApproveContent(contentId) {
+            if (!supabase) return;
             const { error } = await supabase.from('content').update({ approved: true }).eq('id', contentId);
             if (!error) {
                 Utils.showToast('Genehmigt');
@@ -1726,6 +1792,7 @@
 
         async function adminDeleteContent(contentId) {
             if (!confirm('Inhalt wirklich löschen?')) return;
+            if (!supabase) return;
             const { error } = await supabase.from('content').delete().eq('id', contentId);
             if (!error) {
                 Utils.showToast('Gelöscht');
@@ -1781,35 +1848,30 @@
 
         // ============ INIT ============
         async function initApp() {
-            console.log('MCMarket wird gestartet...');
+            console.log('🚀 MCMarket wird gestartet...');
+            setLoadingStatus('Initialisiere...');
             
             try {
                 await DB.init();
-                console.log('DB initialisiert, User:', currentUserData);
+                setLoadingStatus('Lade Oberfläche...');
                 
-                if (currentUserData) {
-                    currentView = 'marketplace';
-                } else {
-                    currentView = 'login';
-                }
+                // Kurz warten damit alles geladen ist
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
-                await Render.app();
-                console.log('App gerendert');
+                Render.app();
+                console.log('✅ App erfolgreich geladen');
             } catch (e) {
-                console.error('Init Fehler:', e);
-                document.getElementById('loadingScreen').innerHTML = `
-                    <div class="text-center">
-                        <i class="fas fa-exclamation-triangle text-5xl text-red-500 mb-4"></i>
-                        <p class="text-xl text-red-400">Fehler beim Laden</p>
-                        <p class="text-gray-400 mt-2">${e.message}</p>
-                        <button onclick="location.reload()" class="mt-4 px-6 py-2 bg-green-600 rounded-lg">Neu laden</button>
-                    </div>
-                `;
+                console.error('❌ Init Fehler:', e);
+                showError(e.message || 'Unbekannter Fehler');
             }
         }
         
-        // App starten
-        initApp();
+        // App starten wenn DOM bereit
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initApp);
+        } else {
+            initApp();
+        }
     </script>
 </body>
 </html>
