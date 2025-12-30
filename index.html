@@ -159,16 +159,9 @@
         const SUPABASE_URL = 'https://lrjyxbwwqenczqucdtgc.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxyanl4Ynd3cWVuY3pxdWNkdGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNDIzMTQsImV4cCI6MjA4MjYxODMxNH0.j_r0DuYk8HlX-uCxU1hxDCkGYKjBK2dKIIvEObHTefQ';
         
-        let supabase = null;
-        let supabaseConnected = false;
-        
-        // Versuche Supabase zu initialisieren
-        try {
-            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('✅ Supabase Client erstellt');
-        } catch (e) {
-            console.error('❌ Supabase Init Fehler:', e);
-        }
+        // Supabase Client erstellen
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        console.log('✅ Supabase Client erstellt');
         
         // Admin E-Mail
         const ADMIN_EMAIL = 'mcmarket.2026@gmail.com';
@@ -198,12 +191,13 @@
         function setLoadingStatus(text) {
             const el = document.getElementById('loadingStatus');
             if (el) el.textContent = text;
-            console.log('Status:', text);
+            console.log('📌 Status:', text);
         }
 
         function hideLoading() {
             const el = document.getElementById('loadingScreen');
             if (el) el.style.display = 'none';
+            console.log('✅ Loading Screen versteckt');
         }
 
         function showError(message) {
@@ -227,67 +221,65 @@
             async init() {
                 setLoadingStatus('Verbinde mit Datenbank...');
                 cachedSettings = defaultSettings;
-                
-                if (!supabase) {
-                    console.log('⚠️ Supabase nicht verfügbar, nutze Defaults');
-                    return true;
-                }
 
                 try {
-                    // Test die Verbindung mit einem Timeout
-                    const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Timeout')), 5000)
-                    );
-                    
-                    const sessionPromise = supabase.auth.getSession();
-                    const { data: { session }, error: sessionError } = await Promise.race([sessionPromise, timeoutPromise]);
+                    // Session prüfen
+                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
                     
                     if (sessionError) {
                         console.log('⚠️ Session Fehler:', sessionError);
                     }
                     
-                    supabaseConnected = true;
-                    setLoadingStatus('Verbindung hergestellt...');
+                    console.log('📌 Session:', session ? 'Vorhanden' : 'Keine');
                     
                     if (session && session.user) {
                         setLoadingStatus('Lade Profil...');
-                        const { data: profile } = await supabase
+                        const { data: profile, error: profileError } = await supabase
                             .from('profiles')
                             .select('*')
                             .eq('id', session.user.id)
                             .single();
                         
-                        if (profile) {
+                        if (profileError) {
+                            console.log('⚠️ Profil Fehler:', profileError);
+                        } else if (profile) {
                             currentUserData = profile;
                             console.log('✅ Profil geladen:', profile.username);
                         }
                     }
                     
                     // Settings laden
-                    try {
-                        const { data: settings } = await supabase
-                            .from('settings')
-                            .select('*')
-                            .eq('id', 1)
-                            .single();
-                        
-                        if (settings) {
-                            cachedSettings = { ...defaultSettings, ...settings };
-                        }
-                    } catch (e) {
-                        console.log('⚠️ Settings nicht geladen, nutze Defaults');
+                    setLoadingStatus('Lade Einstellungen...');
+                    const { data: settings, error: settingsError } = await supabase
+                        .from('settings')
+                        .select('*')
+                        .eq('id', 1)
+                        .single();
+                    
+                    if (settings) {
+                        cachedSettings = { 
+                            ...defaultSettings, 
+                            tokenInterval: settings.token_interval,
+                            tokenAmount: settings.token_amount,
+                            uploadsEnabled: settings.uploads_enabled,
+                            salesEnabled: settings.sales_enabled,
+                            tokenSystemEnabled: settings.token_system_enabled,
+                            requireApproval: settings.require_approval,
+                            registrationEnabled: settings.registration_enabled,
+                            maintenanceMode: settings.maintenance_mode,
+                            welcomeTokens: settings.welcome_tokens
+                        };
+                        console.log('✅ Settings geladen');
                     }
                     
                     return true;
                 } catch (e) {
-                    console.log('⚠️ DB Init Fehler:', e.message);
-                    supabaseConnected = false;
+                    console.error('❌ DB Init Fehler:', e);
                     return true; // Trotzdem fortfahren
                 }
             },
             
             async getContent() { 
-                if (!supabase || !supabaseConnected) return [];
                 try {
                     const { data, error } = await supabase
                         .from('content')
@@ -315,7 +307,6 @@
             },
             
             async getUsers() { 
-                if (!supabase || !supabaseConnected) return [];
                 try {
                     const { data } = await supabase.from('profiles').select('*');
                     return data || [];
@@ -325,7 +316,7 @@
             },
             
             async getPurchases() { 
-                if (!currentUserData || !supabase || !supabaseConnected) return [];
+                if (!currentUserData) return [];
                 try {
                     const { data } = await supabase
                         .from('purchases')
@@ -344,7 +335,7 @@
             },
             
             async getTransactions() { 
-                if (!currentUserData || !supabase || !supabaseConnected) return [];
+                if (!currentUserData) return [];
                 try {
                     const { data } = await supabase
                         .from('transactions')
@@ -415,7 +406,7 @@
 
         // ============ UTILITY FUNCTIONS ============
         const Utils = {
-            generateId: () => 'id_' + Math.random().toString(36).substr(2, 9),
+            generateId: () => 'id_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36),
             formatDate: (dateStr) => {
                 try {
                     return new Date(dateStr).toLocaleDateString('de-DE');
@@ -491,11 +482,6 @@
         // ============ AUTH FUNCTIONS ============
         const Auth = {
             async login(email, password) {
-                if (!supabase) {
-                    Utils.showToast('Datenbank nicht verbunden', 'error');
-                    return null;
-                }
-                
                 try {
                     const { data, error } = await supabase.auth.signInWithPassword({
                         email: email,
@@ -527,10 +513,6 @@
             },
 
             async register(username, email, password) {
-                if (!supabase) {
-                    return { error: 'Datenbank nicht verbunden' };
-                }
-                
                 try {
                     const settings = DB.getSettings();
                     if (!settings.registrationEnabled) return { error: 'Registrierung deaktiviert' };
@@ -574,15 +556,13 @@
             },
 
             async logout() {
-                if (supabase) {
-                    await supabase.auth.signOut();
-                }
+                await supabase.auth.signOut();
                 currentUserData = null;
             },
 
             async claimTokens() {
                 const user = DB.getCurrentUser();
-                if (!user || DB.isAdmin(user) || !supabase) return false;
+                if (!user || DB.isAdmin(user)) return false;
                 if (!Utils.canClaimTokens(user)) return false;
 
                 const settings = DB.getSettings();
@@ -628,7 +608,7 @@
                 const content = allContent.find(c => c.id === contentId);
                 const settings = DB.getSettings();
 
-                if (!user || !content || !supabase) return false;
+                if (!user || !content) return false;
                 
                 if (DB.isAdmin(user)) return true;
                 if (!settings.salesEnabled) return false;
@@ -796,7 +776,6 @@
                                 <i class="fas fa-cube text-5xl text-green-500 mb-4"></i>
                                 <h1 class="text-3xl font-bold">MCMarket</h1>
                                 <p class="text-gray-400 mt-2">Minecraft Content Marketplace</p>
-                                ${!supabaseConnected ? '<p class="text-yellow-400 text-sm mt-2"><i class="fas fa-exclamation-triangle mr-1"></i>Offline-Modus</p>' : ''}
                             </div>
                             
                             <div class="flex mb-6 bg-gray-700/50 rounded-lg p-1">
@@ -832,7 +811,7 @@
                                     </div>
                                     <div>
                                         <label class="block text-sm text-gray-400 mb-1">Passwort</label>
-                                        <input type="password" id="regPassword" required minlength="8" class="w-full px-4 py-3 bg-gray-700 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="Min. 8 Zeichen">
+                                        <input type="password" id="regPassword" required minlength="6" class="w-full px-4 py-3 bg-gray-700 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="Min. 6 Zeichen">
                                     </div>
                                     <div class="flex items-start space-x-2">
                                         <input type="checkbox" id="agbCheckbox" required class="mt-1 w-4 h-4 accent-green-500">
@@ -1666,11 +1645,9 @@
             }
 
             // Download erhöhen
-            if (supabase && supabaseConnected) {
-                await supabase.from('content').update({ 
-                    downloads: (item.downloads || 0) + 1 
-                }).eq('id', id);
-            }
+            await supabase.from('content').update({ 
+                downloads: (item.downloads || 0) + 1 
+            }).eq('id', id);
 
             const savedFile = DB.getFile(id);
             if (savedFile && savedFile.data) {
@@ -1704,11 +1681,6 @@
 
         async function handleUpload(e) {
             e.preventDefault();
-            
-            if (!supabase || !supabaseConnected) {
-                Utils.showToast('Datenbank nicht verbunden', 'error');
-                return;
-            }
             
             const title = document.getElementById('uploadTitle').value.trim();
             const description = document.getElementById('uploadDesc').value.trim();
@@ -1780,7 +1752,6 @@
 
         // ============ ADMIN FUNCTIONS ============
         async function adminApproveContent(contentId) {
-            if (!supabase) return;
             const { error } = await supabase.from('content').update({ approved: true }).eq('id', contentId);
             if (!error) {
                 Utils.showToast('Genehmigt');
@@ -1792,7 +1763,6 @@
 
         async function adminDeleteContent(contentId) {
             if (!confirm('Inhalt wirklich löschen?')) return;
-            if (!supabase) return;
             const { error } = await supabase.from('content').delete().eq('id', contentId);
             if (!error) {
                 Utils.showToast('Gelöscht');
@@ -1856,7 +1826,7 @@
                 setLoadingStatus('Lade Oberfläche...');
                 
                 // Kurz warten damit alles geladen ist
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 300));
                 
                 Render.app();
                 console.log('✅ App erfolgreich geladen');
