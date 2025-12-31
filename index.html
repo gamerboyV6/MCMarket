@@ -160,6 +160,68 @@
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.1); }
         }
+
+        .lightbox {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+        }
+
+        .gallery-thumb {
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .gallery-thumb:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 20px rgba(34, 197, 94, 0.4);
+        }
+
+        .image-preview-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+        }
+
+        .image-preview-item {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .image-preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .image-preview-item .remove-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 24px;
+            height: 24px;
+            background: rgba(239, 68, 68, 0.9);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body class="gradient-bg min-h-screen text-white">
@@ -199,6 +261,7 @@
         let selectedContent = null;
         let filterState = { category: 'all', priceType: 'all', search: '' };
         let notifications = [];
+        let uploadedGalleryImages = [];
 
         // ============ DEFAULT SETTINGS ============
         const defaultSettings = {
@@ -322,6 +385,7 @@
                         fileSize: c.file_size,
                         fileUrl: c.file_url,
                         imageUrl: c.image_url,
+                        galleryUrls: c.gallery_urls || [],
                         createdAt: c.created_at
                     }));
                 } catch (e) {
@@ -419,8 +483,8 @@
                 return urlData.publicUrl;
             },
 
-            async uploadImage(file, contentId) {
-                const fileName = `${contentId}_${Date.now()}_${file.name}`;
+            async uploadImage(file, contentId, suffix = '') {
+                const fileName = `${contentId}_${Date.now()}${suffix}_${file.name}`;
                 const { data, error } = await getSupabase().storage
                     .from('content-images')
                     .upload(fileName, file, { cacheControl: '3600', upsert: true });
@@ -690,7 +754,6 @@
                 const newTokens = (targetUser.tokens || 0) + amount;
                 await getSupabase().from('profiles').update({ tokens: newTokens }).eq('id', userId);
 
-                // Benachrichtigung erstellen
                 await getSupabase().from('notifications').insert({
                     user_id: userId,
                     type: amount > 0 ? 'token_gift' : 'token_remove',
@@ -732,33 +795,6 @@
 
                 await getSupabase().from('profiles').update({ role }).eq('id', userId);
                 await DB.addAdminLog('change_role', 'user', userId, { new_role: role });
-                return true;
-            },
-
-            async banUser(userId, reason, isPermanent, until) {
-                const user = DB.getCurrentUser();
-                if (!DB.isAdmin(user)) return false;
-
-                await getSupabase().from('user_bans').insert({
-                    user_id: userId,
-                    reason,
-                    banned_by: user.id,
-                    is_permanent: isPermanent,
-                    banned_until: until
-                });
-
-                await getSupabase().from('profiles').update({ is_banned: true }).eq('id', userId);
-                await DB.addAdminLog('ban_user', 'user', userId, { reason, is_permanent: isPermanent });
-                return true;
-            },
-
-            async unbanUser(userId) {
-                const user = DB.getCurrentUser();
-                if (!DB.isAdmin(user)) return false;
-
-                await getSupabase().from('user_bans').delete().eq('user_id', userId);
-                await getSupabase().from('profiles').update({ is_banned: false }).eq('id', userId);
-                await DB.addAdminLog('unban_user', 'user', userId, {});
                 return true;
             },
 
@@ -808,29 +844,22 @@
                 cachedSettings = newSettings;
                 await DB.addAdminLog('update_settings', 'settings', '1', newSettings);
                 return true;
-            },
-
-            async createAnnouncement(title, message, type, showPopup, tokenGift) {
-                const user = DB.getCurrentUser();
-                if (!DB.isAdmin(user)) return false;
-
-                await getSupabase().from('announcements').insert({
-                    title,
-                    message,
-                    type,
-                    show_popup: showPopup,
-                    token_gift: tokenGift,
-                    created_by: user.id
-                });
-
-                if (tokenGift > 0) {
-                    await this.giveTokensToAll(tokenGift, `Ankündigung: ${title}`);
-                }
-
-                await DB.addAdminLog('create_announcement', 'announcement', null, { title, type, token_gift: tokenGift });
-                return true;
             }
         };
+
+        // ============ LIGHTBOX ============
+        function openLightbox(imageUrl) {
+            const lightbox = document.createElement('div');
+            lightbox.className = 'lightbox';
+            lightbox.onclick = () => lightbox.remove();
+            lightbox.innerHTML = `
+                <button onclick="event.stopPropagation(); this.parentElement.remove();" class="absolute top-4 right-4 w-12 h-12 bg-gray-800 rounded-full flex items-center justify-center hover:bg-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+                <img src="${imageUrl}" alt="Bild" onclick="event.stopPropagation();">
+            `;
+            document.body.appendChild(lightbox);
+        }
 
         // ============ RENDER FUNCTIONS ============
         const Render = {
@@ -867,7 +896,6 @@
                     ${this.footer()}
                 `;
 
-                // Zeige Benachrichtigungen
                 if (notifications.length > 0) {
                     this.showNotificationPopup();
                 }
@@ -930,7 +958,6 @@
                                     </div>
                                 </div>
                                 <div class="flex items-center space-x-4">
-                                    <!-- Notifications Bell -->
                                     <button onclick="showNotificationsModal()" class="relative p-2 hover:bg-gray-700 rounded-lg transition">
                                         <i class="fas fa-bell text-gray-400"></i>
                                         ${unreadNotifs > 0 ? `<span class="notification-badge">${unreadNotifs}</span>` : ''}
@@ -1152,6 +1179,7 @@
                             </div>
                             ${!item.approved ? `<span class="absolute top-3 right-3 px-2 py-1 text-xs rounded bg-yellow-500">Ausstehend</span>` :
                               item.price === 0 ? `<span class="absolute top-3 right-3 px-2 py-1 text-xs rounded bg-green-500 font-bold">GRATIS</span>` : ''}
+                            ${item.galleryUrls && item.galleryUrls.length > 0 ? `<span class="absolute bottom-3 right-3 px-2 py-1 text-xs rounded bg-black/50"><i class="fas fa-images mr-1"></i>${item.galleryUrls.length + 1}</span>` : ''}
                         </div>
                         <div class="p-4">
                             <h3 class="font-bold text-lg mb-1 truncate">${item.title}</h3>
@@ -1180,6 +1208,9 @@
                 const isOwner = item.uploaderId === user.id;
                 const canEdit = isOwner || isAdmin;
 
+                // Alle Bilder (Vorschau + Galerie)
+                const allImages = [item.imageUrl, ...(item.galleryUrls || [])].filter(Boolean);
+
                 document.getElementById('content').innerHTML = `
                     <div class="fade-in max-w-4xl mx-auto">
                         <button onclick="Render.navigate('marketplace')" class="mb-6 text-gray-400 hover:text-white">
@@ -1187,9 +1218,22 @@
                         </button>
 
                         <div class="bg-gray-800/50 rounded-2xl overflow-hidden border border-gray-700">
-                            <div class="h-64 bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center relative overflow-hidden">
-                                ${item.imageUrl ? `<img src="${item.imageUrl}" class="w-full h-full object-cover" alt="${item.title}">` : `<i class="fas ${Utils.getCategoryIcon(item.category)} text-8xl text-gray-600"></i>`}
+                            <!-- Hauptbild -->
+                            <div class="h-80 bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center relative overflow-hidden">
+                                ${item.imageUrl ? `
+                                    <img src="${item.imageUrl}" class="w-full h-full object-cover cursor-pointer" alt="${item.title}" onclick="openLightbox('${item.imageUrl}')">
+                                ` : `<i class="fas ${Utils.getCategoryIcon(item.category)} text-8xl text-gray-600"></i>`}
+                                ${allImages.length > 1 ? `<span class="absolute bottom-4 right-4 px-3 py-1 bg-black/60 rounded-lg text-sm"><i class="fas fa-images mr-2"></i>${allImages.length} Bilder</span>` : ''}
                             </div>
+
+                            <!-- Galerie Thumbnails -->
+                            ${allImages.length > 1 ? `
+                                <div class="flex gap-2 p-4 bg-gray-900/50 overflow-x-auto">
+                                    ${allImages.map((img, i) => `
+                                        <img src="${img}" class="w-20 h-20 object-cover rounded-lg gallery-thumb ${i === 0 ? 'ring-2 ring-green-500' : ''}" onclick="openLightbox('${img}')" alt="Bild ${i + 1}">
+                                    `).join('')}
+                                </div>
+                            ` : ''}
 
                             <div class="p-8">
                                 <div class="flex flex-col md:flex-row justify-between gap-6 mb-8">
@@ -1351,6 +1395,7 @@
             upload() {
                 const user = DB.getCurrentUser();
                 const settings = DB.getSettings();
+                uploadedGalleryImages = [];
 
                 if (!settings.uploadsEnabled && !DB.isAdmin(user)) {
                     document.getElementById('content').innerHTML = `
@@ -1405,11 +1450,31 @@
                                 </div>
                             </div>
 
+                            <!-- Vorschaubild -->
                             <div>
-                                <label class="block text-sm text-gray-400 mb-2">Vorschaubild</label>
-                                <input type="file" id="imageInput" accept="image/*" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
+                                <label class="block text-sm text-gray-400 mb-2">Vorschaubild (Thumbnail) *</label>
+                                <div class="border-2 border-dashed border-gray-600 rounded-lg p-4 text-center hover:border-green-500 transition cursor-pointer" onclick="document.getElementById('thumbnailInput').click()">
+                                    <div id="thumbnailPreview" class="hidden mb-4">
+                                        <img id="thumbnailImg" class="max-h-40 mx-auto rounded-lg">
+                                    </div>
+                                    <i class="fas fa-image text-3xl text-gray-500 mb-2"></i>
+                                    <p class="text-gray-400">Vorschaubild hochladen</p>
+                                    <input type="file" id="thumbnailInput" class="hidden" accept="image/*" required onchange="handleThumbnailPreview(event)">
+                                </div>
                             </div>
 
+                            <!-- Galerie Bilder -->
+                            <div>
+                                <label class="block text-sm text-gray-400 mb-2">Galerie Bilder (optional, max. 5)</label>
+                                <div class="border-2 border-dashed border-gray-600 rounded-lg p-4 text-center hover:border-blue-500 transition cursor-pointer" onclick="document.getElementById('galleryInput').click()">
+                                    <i class="fas fa-images text-3xl text-gray-500 mb-2"></i>
+                                    <p class="text-gray-400">Weitere Bilder hinzufügen</p>
+                                    <input type="file" id="galleryInput" class="hidden" accept="image/*" multiple onchange="handleGalleryPreview(event)">
+                                </div>
+                                <div id="galleryPreviewContainer" class="image-preview-container mt-4"></div>
+                            </div>
+
+                            <!-- Datei -->
                             <div>
                                 <label class="block text-sm text-gray-400 mb-2">Datei * (max 50MB)</label>
                                 <input type="file" id="fileInput" required accept=".jar,.zip,.sk,.yml,.json,.mcpack,.mcworld" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
@@ -1475,7 +1540,7 @@
                         <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
                             <h3 class="font-bold mb-4"><i class="fas fa-history mr-2 text-yellow-400"></i>Transaktionen</h3>
                             ${transactions.length === 0 ? '<p class="text-gray-400">Keine Transaktionen</p>' : `
-                                <div class="space-y-2">
+                                <div class="space-y-2 max-h-64 overflow-y-auto">
                                     ${transactions.slice(0, 20).map(t => `
                                         <div class="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
                                             <div class="flex items-center">
@@ -1508,7 +1573,6 @@
                     <div class="fade-in">
                         <h1 class="text-3xl font-bold mb-8"><i class="fas fa-crown mr-3 text-red-500"></i>Admin Panel</h1>
 
-                        <!-- Stats -->
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                             <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
                                 <div class="text-3xl font-bold text-blue-400">${users.length}</div>
@@ -1528,7 +1592,6 @@
                             </div>
                         </div>
 
-                        <!-- Tabs -->
                         <div class="flex flex-wrap gap-2 mb-6">
                             <button onclick="showAdminTab('tokens')" class="px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700"><i class="fas fa-coins mr-2"></i>Tokens</button>
                             <button onclick="showAdminTab('users')" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"><i class="fas fa-users mr-2"></i>Benutzer</button>
@@ -1566,6 +1629,52 @@
             }
         };
 
+        // ============ IMAGE PREVIEW FUNCTIONS ============
+        function handleThumbnailPreview(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    document.getElementById('thumbnailPreview').classList.remove('hidden');
+                    document.getElementById('thumbnailImg').src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function handleGalleryPreview(e) {
+            const files = Array.from(e.target.files);
+            const container = document.getElementById('galleryPreviewContainer');
+            
+            files.forEach((file, index) => {
+                if (uploadedGalleryImages.length >= 5) return;
+                
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    uploadedGalleryImages.push({ file, dataUrl: event.target.result });
+                    updateGalleryPreview();
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function updateGalleryPreview() {
+            const container = document.getElementById('galleryPreviewContainer');
+            container.innerHTML = uploadedGalleryImages.map((img, i) => `
+                <div class="image-preview-item">
+                    <img src="${img.dataUrl}" alt="Galerie ${i + 1}">
+                    <div class="remove-btn" onclick="removeGalleryImage(${i})">
+                        <i class="fas fa-times text-xs"></i>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function removeGalleryImage(index) {
+            uploadedGalleryImages.splice(index, 1);
+            updateGalleryPreview();
+        }
+
         // ============ ADMIN TAB FUNCTIONS ============
         async function showAdminTab(tab) {
             const adminContent = document.getElementById('adminContent');
@@ -1581,7 +1690,6 @@
                 case 'tokens':
                     adminContent.innerHTML = `
                         <div class="space-y-6">
-                            <!-- Token an einzelnen User -->
                             <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
                                 <h3 class="font-bold mb-4"><i class="fas fa-user text-yellow-400 mr-2"></i>Tokens an User senden</h3>
                                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1610,7 +1718,6 @@
                                 </div>
                             </div>
 
-                            <!-- Token an alle -->
                             <div class="bg-yellow-500/10 rounded-xl p-6 border border-yellow-500/50">
                                 <h3 class="font-bold mb-4 text-yellow-400"><i class="fas fa-users mr-2"></i>Tokens an ALLE User senden</h3>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2073,12 +2180,10 @@
                 return;
             }
 
-            // Download zählen
             await getSupabase().from('content').update({ 
                 downloads: (item.downloads || 0) + 1 
             }).eq('id', id);
 
-            // Datei herunterladen
             const a = document.createElement('a');
             a.href = item.fileUrl;
             a.download = item.fileName || 'download';
@@ -2099,10 +2204,15 @@
             const price = parseInt(document.getElementById('uploadPrice').value) || 0;
             const mcVersions = Array.from(document.querySelectorAll('input[name="mcVersion"]:checked')).map(c => c.value);
             const file = document.getElementById('fileInput').files[0];
-            const imageFile = document.getElementById('imageInput').files[0];
+            const thumbnailFile = document.getElementById('thumbnailInput').files[0];
 
             if (!file) {
                 Utils.showToast('Bitte Datei auswählen', 'error');
+                return;
+            }
+
+            if (!thumbnailFile) {
+                Utils.showToast('Bitte Vorschaubild auswählen', 'error');
                 return;
             }
 
@@ -2131,11 +2241,16 @@
                     return;
                 }
 
-                // Bild hochladen (optional)
-                let imageUrl = null;
-                if (imageFile) {
-                    Utils.showToast('Lade Bild hoch...', 'info');
-                    imageUrl = await DB.uploadImage(imageFile, contentId);
+                // Thumbnail hochladen
+                Utils.showToast('Lade Vorschaubild hoch...', 'info');
+                const imageUrl = await DB.uploadImage(thumbnailFile, contentId, '_thumb');
+
+                // Galerie-Bilder hochladen
+                const galleryUrls = [];
+                for (let i = 0; i < uploadedGalleryImages.length; i++) {
+                    Utils.showToast(`Lade Galerie-Bild ${i + 1}/${uploadedGalleryImages.length}...`, 'info');
+                    const url = await DB.uploadImage(uploadedGalleryImages[i].file, contentId, `_gallery_${i}`);
+                    if (url) galleryUrls.push(url);
                 }
 
                 // Content in Datenbank speichern
@@ -2151,6 +2266,7 @@
                     file_size: Utils.formatFileSize(file.size),
                     file_url: fileUrl,
                     image_url: imageUrl,
+                    gallery_urls: galleryUrls,
                     uploader_id: user.id,
                     uploader_name: user.username || 'Unbekannt',
                     downloads: 0,
@@ -2164,6 +2280,7 @@
                     return;
                 }
 
+                uploadedGalleryImages = [];
                 Utils.showToast(DB.isAdmin(user) ? 'Veröffentlicht!' : 'Hochgeladen - wartet auf Genehmigung');
                 await Render.navigate('marketplace');
             } catch (err) {
