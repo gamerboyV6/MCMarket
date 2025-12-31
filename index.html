@@ -704,7 +704,10 @@
                 const settings = DB.getSettings();
                 const isAdmin = DB.isAdmin(user);
 
-                if (!user || !content) return false;
+                if (!user || !content) {
+                    console.log('Purchase failed: user or content missing');
+                    return false;
+                }
                 
                 // Prüfen ob bereits gekauft
                 const purchases = await DB.getPurchases();
@@ -732,18 +735,40 @@
                 }
 
                 // IMMER Tokens an Creator geben (auch wenn Admin kauft!)
+                // Prüfen: Preis > 0, Creator existiert, Käufer ist nicht der Creator
+                console.log('Purchase check - Price:', content.price, 'UploaderId:', content.uploaderId, 'BuyerId:', user.id);
+                
                 if (content.price > 0 && content.uploaderId && content.uploaderId !== user.id) {
-                    // Creator Tokens geben
-                    const { data: creator } = await getSupabase()
+                    console.log('Giving tokens to creator...');
+                    
+                    // Creator Profil laden
+                    const { data: creator, error: creatorError } = await getSupabase()
                         .from('profiles')
                         .select('*')
                         .eq('id', content.uploaderId)
                         .single();
                     
+                    if (creatorError) {
+                        console.error('Error loading creator:', creatorError);
+                    }
+                    
+                    console.log('Creator found:', creator);
+                    
                     // Creator bekommt IMMER Tokens (außer wenn Creator selbst Admin ist)
                     if (creator && creator.email !== ADMIN_EMAIL) {
                         const creatorNewTokens = (creator.tokens || 0) + content.price;
-                        await getSupabase().from('profiles').update({ tokens: creatorNewTokens }).eq('id', content.uploaderId);
+                        console.log('Giving creator', content.price, 'tokens. New total:', creatorNewTokens);
+                        
+                        const { error: updateError } = await getSupabase()
+                            .from('profiles')
+                            .update({ tokens: creatorNewTokens })
+                            .eq('id', content.uploaderId);
+                        
+                        if (updateError) {
+                            console.error('Error updating creator tokens:', updateError);
+                        } else {
+                            console.log('Creator tokens updated successfully!');
+                        }
 
                         // Transaktion für Creator
                         await getSupabase().from('transactions').insert({
@@ -762,8 +787,13 @@
                                 message: `"${content.title}" wurde für ${content.price} Tokens gekauft!`,
                                 token_amount: content.price
                             });
+                            console.log('Notification sent to creator');
                         }
+                    } else {
+                        console.log('Creator is admin or not found, no tokens given');
                     }
+                } else {
+                    console.log('No tokens to give - price is 0 or buyer is creator');
                 }
 
                 // Kauf speichern
@@ -1322,11 +1352,9 @@
                                                 <button onclick="showEditContentModal('${item.id}')" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg">
                                                     <i class="fas fa-edit mr-1"></i>Bearbeiten
                                                 </button>
-                                                ${isAdmin ? `
-                                                    <button onclick="adminDeleteContent('${item.id}')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg">
-                                                        <i class="fas fa-trash mr-1"></i>Löschen
-                                                    </button>
-                                                ` : ''}
+                                                <button onclick="deleteOwnContent('${item.id}')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg">
+                                                    <i class="fas fa-trash mr-1"></i>Löschen
+                                                </button>
                                             </div>
                                         ` : ''}
                                     </div>
@@ -1391,6 +1419,9 @@
                                             </button>
                                             <button onclick="showEditContentModal('${item.id}')" class="px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg">
                                                 <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button onclick="deleteOwnContent('${item.id}')" class="px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg">
+                                                <i class="fas fa-trash"></i>
                                             </button>
                                         </div>
                                     </div>
@@ -1710,43 +1741,111 @@
                 const users = await DB.getUsers();
                 const content = await DB.getContent();
                 const pendingContent = content.filter(c => !c.approved).length;
+                const creators = users.filter(u => u.role === 'creator').length;
+                const totalDownloads = content.reduce((sum, c) => sum + (c.downloads || 0), 0);
+                const totalTokens = users.filter(u => u.role !== 'admin').reduce((sum, u) => sum + (u.tokens || 0), 0);
 
                 document.getElementById('content').innerHTML = `
                     <div class="fade-in">
-                        <h1 class="text-3xl font-bold mb-8"><i class="fas fa-crown mr-3 text-red-500"></i>Admin Panel</h1>
-
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                            <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-                                <div class="text-3xl font-bold text-blue-400">${users.length}</div>
-                                <div class="text-gray-400">Benutzer</div>
-                            </div>
-                            <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-                                <div class="text-3xl font-bold text-green-400">${content.length}</div>
-                                <div class="text-gray-400">Inhalte</div>
-                            </div>
-                            <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-                                <div class="text-3xl font-bold text-yellow-400">${pendingContent}</div>
-                                <div class="text-gray-400">Ausstehend</div>
-                            </div>
-                            <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-                                <div class="text-3xl font-bold text-purple-400">${notifications.length}</div>
-                                <div class="text-gray-400">Benachr.</div>
+                        <div class="flex items-center justify-between mb-8">
+                            <h1 class="text-3xl font-bold"><i class="fas fa-crown mr-3 text-red-500"></i>Admin Panel</h1>
+                            <div class="text-sm text-gray-400">
+                                <i class="fas fa-clock mr-1"></i>Letzte Aktualisierung: ${new Date().toLocaleTimeString('de-DE')}
+                                <button onclick="Render.navigate('admin')" class="ml-3 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded">
+                                    <i class="fas fa-sync"></i>
+                                </button>
                             </div>
                         </div>
 
-                        <div class="flex flex-wrap gap-2 mb-6">
-                            <button onclick="showAdminTab('tokens')" class="px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700"><i class="fas fa-coins mr-2"></i>Tokens</button>
-                            <button onclick="showAdminTab('users')" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"><i class="fas fa-users mr-2"></i>Benutzer</button>
-                            <button onclick="showAdminTab('content')" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"><i class="fas fa-box mr-2"></i>Inhalte</button>
-                            <button onclick="showAdminTab('settings')" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"><i class="fas fa-cog mr-2"></i>Einstellungen</button>
-                            <button onclick="showAdminTab('logs')" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600"><i class="fas fa-history mr-2"></i>Logs</button>
+                        <!-- Statistik-Karten -->
+                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+                            <div class="bg-gradient-to-br from-blue-600/20 to-blue-800/20 rounded-xl p-4 border border-blue-500/30">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="text-2xl font-bold text-blue-400">${users.length}</div>
+                                        <div class="text-xs text-gray-400">Benutzer</div>
+                                    </div>
+                                    <i class="fas fa-users text-2xl text-blue-400/50"></i>
+                                </div>
+                            </div>
+                            <div class="bg-gradient-to-br from-purple-600/20 to-purple-800/20 rounded-xl p-4 border border-purple-500/30">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="text-2xl font-bold text-purple-400">${creators}</div>
+                                        <div class="text-xs text-gray-400">Creator</div>
+                                    </div>
+                                    <i class="fas fa-paint-brush text-2xl text-purple-400/50"></i>
+                                </div>
+                            </div>
+                            <div class="bg-gradient-to-br from-green-600/20 to-green-800/20 rounded-xl p-4 border border-green-500/30">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="text-2xl font-bold text-green-400">${content.length}</div>
+                                        <div class="text-xs text-gray-400">Inhalte</div>
+                                    </div>
+                                    <i class="fas fa-box text-2xl text-green-400/50"></i>
+                                </div>
+                            </div>
+                            <div class="bg-gradient-to-br from-yellow-600/20 to-yellow-800/20 rounded-xl p-4 border border-yellow-500/30">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="text-2xl font-bold text-yellow-400">${pendingContent}</div>
+                                        <div class="text-xs text-gray-400">Ausstehend</div>
+                                    </div>
+                                    <i class="fas fa-clock text-2xl text-yellow-400/50"></i>
+                                </div>
+                            </div>
+                            <div class="bg-gradient-to-br from-cyan-600/20 to-cyan-800/20 rounded-xl p-4 border border-cyan-500/30">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="text-2xl font-bold text-cyan-400">${totalDownloads}</div>
+                                        <div class="text-xs text-gray-400">Downloads</div>
+                                    </div>
+                                    <i class="fas fa-download text-2xl text-cyan-400/50"></i>
+                                </div>
+                            </div>
+                            <div class="bg-gradient-to-br from-orange-600/20 to-orange-800/20 rounded-xl p-4 border border-orange-500/30">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="text-2xl font-bold text-orange-400">${Utils.formatTokens(totalTokens)}</div>
+                                        <div class="text-xs text-gray-400">Tokens im Umlauf</div>
+                                    </div>
+                                    <i class="fas fa-coins text-2xl text-orange-400/50"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Navigation Tabs -->
+                        <div class="flex flex-wrap gap-2 mb-6 p-2 bg-gray-800/30 rounded-xl">
+                            <button onclick="showAdminTab('overview')" id="tab-overview" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 transition">
+                                <i class="fas fa-chart-pie mr-2"></i>Übersicht
+                            </button>
+                            <button onclick="showAdminTab('tokens')" id="tab-tokens" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">
+                                <i class="fas fa-coins mr-2"></i>Tokens
+                            </button>
+                            <button onclick="showAdminTab('users')" id="tab-users" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">
+                                <i class="fas fa-users mr-2"></i>Benutzer
+                            </button>
+                            <button onclick="showAdminTab('content')" id="tab-content" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">
+                                <i class="fas fa-box mr-2"></i>Inhalte
+                            </button>
+                            <button onclick="showAdminTab('pending')" id="tab-pending" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition ${pendingContent > 0 ? 'border border-yellow-500' : ''}">
+                                <i class="fas fa-hourglass-half mr-2"></i>Ausstehend
+                                ${pendingContent > 0 ? `<span class="ml-1 px-2 py-0.5 bg-yellow-500 text-black text-xs rounded-full">${pendingContent}</span>` : ''}
+                            </button>
+                            <button onclick="showAdminTab('settings')" id="tab-settings" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">
+                                <i class="fas fa-cog mr-2"></i>Einstellungen
+                            </button>
+                            <button onclick="showAdminTab('logs')" id="tab-logs" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">
+                                <i class="fas fa-history mr-2"></i>Logs
+                            </button>
                         </div>
 
                         <div id="adminContent"></div>
                     </div>
                 `;
 
-                showAdminTab('tokens');
+                showAdminTab('overview');
             },
 
             footer() {
@@ -1865,13 +1964,135 @@
             const adminContent = document.getElementById('adminContent');
             if (!adminContent) return;
 
+            // Tab-Buttons aktualisieren
+            document.querySelectorAll('[id^="tab-"]').forEach(btn => {
+                btn.classList.remove('bg-red-600', 'bg-yellow-600', 'bg-green-600', 'bg-blue-600');
+                btn.classList.add('bg-gray-700');
+            });
+            const activeTab = document.getElementById(`tab-${tab}`);
+            if (activeTab) {
+                activeTab.classList.remove('bg-gray-700');
+                activeTab.classList.add('bg-red-600');
+            }
+
             adminContent.innerHTML = '<div class="flex justify-center py-8"><div class="spinner"></div></div>';
 
             const users = await DB.getUsers();
             const content = await DB.getContent();
             const settings = DB.getSettings();
+            const pendingContent = content.filter(c => !c.approved);
 
             switch(tab) {
+                case 'overview':
+                    const recentUsers = users.slice(0, 5);
+                    const recentContent = content.slice(0, 5);
+                    const topCreators = users.filter(u => u.role === 'creator').slice(0, 5);
+                    
+                    adminContent.innerHTML = `
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Schnellaktionen -->
+                            <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+                                <h3 class="font-bold mb-4 text-lg"><i class="fas fa-bolt mr-2 text-yellow-400"></i>Schnellaktionen</h3>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <button onclick="showAdminTab('tokens')" class="p-4 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/50 rounded-lg text-left transition">
+                                        <i class="fas fa-coins text-2xl text-yellow-400 mb-2"></i>
+                                        <div class="font-bold">Tokens vergeben</div>
+                                        <div class="text-xs text-gray-400">An User oder alle</div>
+                                    </button>
+                                    <button onclick="showAdminTab('pending')" class="p-4 bg-orange-600/20 hover:bg-orange-600/30 border border-orange-500/50 rounded-lg text-left transition">
+                                        <i class="fas fa-check-circle text-2xl text-orange-400 mb-2"></i>
+                                        <div class="font-bold">Inhalte genehmigen</div>
+                                        <div class="text-xs text-gray-400">${pendingContent.length} ausstehend</div>
+                                    </button>
+                                    <button onclick="showAdminTab('users')" class="p-4 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/50 rounded-lg text-left transition">
+                                        <i class="fas fa-user-cog text-2xl text-blue-400 mb-2"></i>
+                                        <div class="font-bold">User verwalten</div>
+                                        <div class="text-xs text-gray-400">Rollen & Tokens</div>
+                                    </button>
+                                    <button onclick="showAdminTab('settings')" class="p-4 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/50 rounded-lg text-left transition">
+                                        <i class="fas fa-sliders-h text-2xl text-purple-400 mb-2"></i>
+                                        <div class="font-bold">Einstellungen</div>
+                                        <div class="text-xs text-gray-400">System konfigurieren</div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Ausstehende Genehmigungen -->
+                            <div class="bg-gray-800/50 rounded-xl p-6 border ${pendingContent.length > 0 ? 'border-yellow-500' : 'border-gray-700'}">
+                                <h3 class="font-bold mb-4 text-lg"><i class="fas fa-hourglass-half mr-2 text-yellow-400"></i>Ausstehende Genehmigungen</h3>
+                                ${pendingContent.length === 0 ? `
+                                    <div class="text-center py-8 text-gray-500">
+                                        <i class="fas fa-check-circle text-4xl mb-2 text-green-500"></i>
+                                        <p>Keine ausstehenden Inhalte</p>
+                                    </div>
+                                ` : `
+                                    <div class="space-y-2 max-h-64 overflow-y-auto">
+                                        ${pendingContent.slice(0, 5).map(c => `
+                                            <div class="flex items-center justify-between p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
+                                                <div>
+                                                    <div class="font-bold">${c.title}</div>
+                                                    <div class="text-xs text-gray-400">von ${c.uploaderName || 'Unbekannt'}</div>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button onclick="adminApproveContent('${c.id}')" class="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm">
+                                                        <i class="fas fa-check"></i>
+                                                    </button>
+                                                    <button onclick="adminDeleteContent('${c.id}')" class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${pendingContent.length > 5 ? `<button onclick="showAdminTab('pending')" class="w-full mt-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm">Alle ${pendingContent.length} anzeigen</button>` : ''}
+                                `}
+                            </div>
+
+                            <!-- Neueste Benutzer -->
+                            <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+                                <h3 class="font-bold mb-4 text-lg"><i class="fas fa-user-plus mr-2 text-blue-400"></i>Neueste Benutzer</h3>
+                                <div class="space-y-2">
+                                    ${recentUsers.map(u => `
+                                        <div class="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-full ${u.role === 'admin' ? 'bg-red-500' : u.role === 'creator' ? 'bg-purple-500' : 'bg-blue-500'} flex items-center justify-center font-bold">
+                                                    ${(u.username || 'U').charAt(0).toUpperCase()}
+                                                </div>
+                                                <div>
+                                                    <div class="font-bold">${u.username || 'Unbekannt'}</div>
+                                                    <div class="text-xs text-gray-400">${u.email}</div>
+                                                </div>
+                                            </div>
+                                            <span class="px-2 py-1 text-xs rounded ${u.role === 'admin' ? 'bg-red-500' : u.role === 'creator' ? 'bg-purple-500' : 'bg-blue-500'}">${u.role}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Neueste Inhalte -->
+                            <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+                                <h3 class="font-bold mb-4 text-lg"><i class="fas fa-box mr-2 text-green-400"></i>Neueste Inhalte</h3>
+                                <div class="space-y-2">
+                                    ${recentContent.map(c => `
+                                        <div class="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-lg bg-gray-600 flex items-center justify-center">
+                                                    <i class="fas ${Utils.getCategoryIcon(c.category)} text-gray-400"></i>
+                                                </div>
+                                                <div>
+                                                    <div class="font-bold">${c.title}</div>
+                                                    <div class="text-xs text-gray-400">${c.uploaderName || 'Unbekannt'} • ${c.price} Tokens</div>
+                                                </div>
+                                            </div>
+                                            <span class="px-2 py-1 text-xs rounded ${c.approved ? 'bg-green-500' : 'bg-yellow-500'}">${c.approved ? 'OK' : 'Ausstehend'}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
                 case 'tokens':
                     adminContent.innerHTML = `
                         <div class="space-y-6">
@@ -2081,20 +2302,102 @@
                     `;
                     break;
 
+                case 'pending':
+                    adminContent.innerHTML = `
+                        <div class="bg-gray-800/50 rounded-xl border border-gray-700 overflow-hidden">
+                            <div class="p-4 bg-yellow-600/20 border-b border-yellow-500/50">
+                                <h3 class="font-bold text-yellow-400"><i class="fas fa-hourglass-half mr-2"></i>Ausstehende Genehmigungen (${pendingContent.length})</h3>
+                            </div>
+                            ${pendingContent.length === 0 ? `
+                                <div class="p-16 text-center">
+                                    <i class="fas fa-check-circle text-6xl text-green-500 mb-4"></i>
+                                    <p class="text-xl font-bold">Alles erledigt!</p>
+                                    <p class="text-gray-400">Keine Inhalte warten auf Genehmigung.</p>
+                                </div>
+                            ` : `
+                                <div class="divide-y divide-gray-700">
+                                    ${pendingContent.map(c => `
+                                        <div class="p-4 hover:bg-gray-700/30 transition">
+                                            <div class="flex items-start justify-between gap-4">
+                                                <div class="flex items-start gap-4 flex-1">
+                                                    <div class="w-20 h-20 rounded-lg bg-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                                        ${c.imageUrl ? `<img src="${c.imageUrl}" class="w-full h-full object-cover">` : `<i class="fas ${Utils.getCategoryIcon(c.category)} text-2xl text-gray-500"></i>`}
+                                                    </div>
+                                                    <div class="flex-1 min-w-0">
+                                                        <h4 class="font-bold text-lg">${c.title}</h4>
+                                                        <p class="text-sm text-gray-400 mb-2">
+                                                            von <span class="text-purple-400">${c.uploaderName || 'Unbekannt'}</span> • 
+                                                            ${Utils.getCategoryName(c.category)} • 
+                                                            ${c.price} Tokens
+                                                        </p>
+                                                        <p class="text-sm text-gray-500 line-clamp-2">${c.description || 'Keine Beschreibung'}</p>
+                                                        ${c.mcVersions && c.mcVersions.length > 0 ? `
+                                                            <div class="flex flex-wrap gap-1 mt-2">
+                                                                ${c.mcVersions.slice(0, 5).map(v => `<span class="px-2 py-0.5 bg-gray-700 text-xs rounded">${v}</span>`).join('')}
+                                                                ${c.mcVersions.length > 5 ? `<span class="px-2 py-0.5 bg-gray-700 text-xs rounded">+${c.mcVersions.length - 5}</span>` : ''}
+                                                            </div>
+                                                        ` : ''}
+                                                    </div>
+                                                </div>
+                                                <div class="flex flex-col gap-2">
+                                                    <button onclick="viewContent('${c.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm">
+                                                        <i class="fas fa-eye mr-1"></i>Ansehen
+                                                    </button>
+                                                    <button onclick="adminApproveContent('${c.id}')" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-bold">
+                                                        <i class="fas fa-check mr-1"></i>Genehmigen
+                                                    </button>
+                                                    <button onclick="adminDeleteContent('${c.id}')" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm">
+                                                        <i class="fas fa-trash mr-1"></i>Ablehnen
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                <div class="p-4 bg-gray-700/30 border-t border-gray-700">
+                                    <button onclick="adminApproveAllPending()" class="w-full py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold">
+                                        <i class="fas fa-check-double mr-2"></i>Alle ${pendingContent.length} genehmigen
+                                    </button>
+                                </div>
+                            `}
+                        </div>
+                    `;
+                    break;
+
                 case 'logs':
                     const logs = await DB.getAdminLogs();
                     adminContent.innerHTML = `
                         <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
-                            <h3 class="font-bold mb-4"><i class="fas fa-history mr-2"></i>Admin-Logs</h3>
-                            ${logs.length === 0 ? '<p class="text-gray-400">Keine Logs vorhanden</p>' : `
-                                <div class="space-y-2 max-h-96 overflow-y-auto">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="font-bold text-lg"><i class="fas fa-history mr-2 text-blue-400"></i>Admin-Logs</h3>
+                                <span class="text-sm text-gray-400">${logs.length} Einträge</span>
+                            </div>
+                            ${logs.length === 0 ? '<p class="text-gray-400 text-center py-8">Keine Logs vorhanden</p>' : `
+                                <div class="space-y-2 max-h-[600px] overflow-y-auto">
                                     ${logs.map(l => `
-                                        <div class="p-3 bg-gray-700/50 rounded-lg text-sm">
-                                            <div class="flex justify-between">
-                                                <span class="font-bold text-blue-400">${l.action}</span>
-                                                <span class="text-gray-500">${Utils.formatDate(l.created_at)}</span>
+                                        <div class="p-3 bg-gray-700/50 rounded-lg text-sm flex items-center justify-between">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-full ${
+                                                    l.action.includes('delete') ? 'bg-red-500/20 text-red-400' :
+                                                    l.action.includes('approve') ? 'bg-green-500/20 text-green-400' :
+                                                    l.action.includes('token') ? 'bg-yellow-500/20 text-yellow-400' :
+                                                    l.action.includes('role') ? 'bg-purple-500/20 text-purple-400' :
+                                                    'bg-blue-500/20 text-blue-400'
+                                                } flex items-center justify-center">
+                                                    <i class="fas ${
+                                                        l.action.includes('delete') ? 'fa-trash' :
+                                                        l.action.includes('approve') ? 'fa-check' :
+                                                        l.action.includes('token') ? 'fa-coins' :
+                                                        l.action.includes('role') ? 'fa-user-tag' :
+                                                        'fa-cog'
+                                                    }"></i>
+                                                </div>
+                                                <div>
+                                                    <div class="font-bold">${l.action.replace(/_/g, ' ').toUpperCase()}</div>
+                                                    <div class="text-gray-400">${l.target_type}: ${l.target_id || 'N/A'}</div>
+                                                </div>
                                             </div>
-                                            <div class="text-gray-400">${l.target_type}: ${l.target_id || 'N/A'}</div>
+                                            <span class="text-gray-500 text-xs">${Utils.formatDate(l.created_at)}</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -2103,6 +2406,21 @@
                     `;
                     break;
             }
+        }
+
+        // Alle ausstehenden genehmigen
+        async function adminApproveAllPending() {
+            if (!confirm('Wirklich ALLE ausstehenden Inhalte genehmigen?')) return;
+            
+            const content = await DB.getContent();
+            const pending = content.filter(c => !c.approved);
+            
+            for (const c of pending) {
+                await Admin.approveContent(c.id);
+            }
+            
+            Utils.showToast(`${pending.length} Inhalte genehmigt!`);
+            showAdminTab('pending');
         }
 
         // ============ HELPER FUNCTIONS ============
@@ -2169,18 +2487,22 @@
             const item = allContent.find(c => c.id === contentId);
             if (!item) return;
 
+            const mcVersions = ['1.21', '1.20.4', '1.20.1', '1.19.4', '1.18.2', '1.17.1', '1.16.5', '1.12.2', '1.8.9'];
+
             showModal(`
-                <h2 class="text-xl font-bold mb-4"><i class="fas fa-edit mr-2 text-yellow-400"></i>Inhalt bearbeiten</h2>
-                <form onsubmit="handleEditContent(event, '${contentId}')">
-                    <div class="space-y-4">
+                <h2 class="text-xl font-bold mb-4"><i class="fas fa-edit mr-2 text-yellow-400"></i>Inhalt bearbeiten / Update</h2>
+                <form onsubmit="handleEditContent(event, '${contentId}')" class="max-h-[70vh] overflow-y-auto">
+                    <div class="space-y-4 pr-2">
                         <div>
-                            <label class="block text-sm text-gray-400 mb-1">Titel</label>
+                            <label class="block text-sm text-gray-400 mb-1">Titel *</label>
                             <input type="text" id="editTitle" value="${item.title}" required class="w-full px-4 py-3 bg-gray-700 rounded-lg">
                         </div>
+                        
                         <div>
-                            <label class="block text-sm text-gray-400 mb-1">Beschreibung</label>
+                            <label class="block text-sm text-gray-400 mb-1">Beschreibung *</label>
                             <textarea id="editDesc" rows="4" class="w-full px-4 py-3 bg-gray-700 rounded-lg">${item.description || ''}</textarea>
                         </div>
+                        
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm text-gray-400 mb-1">Kategorie</label>
@@ -2192,32 +2514,158 @@
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-sm text-gray-400 mb-1">Preis</label>
+                                <label class="block text-sm text-gray-400 mb-1">Preis (Tokens)</label>
                                 <input type="number" id="editPrice" value="${item.price}" min="0" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
                             </div>
                         </div>
+                        
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Version (z.B. V2, 1.1, Beta)</label>
+                            <input type="text" id="editVersion" value="${item.version || '1.0'}" class="w-full px-4 py-3 bg-gray-700 rounded-lg" placeholder="z.B. V2, 1.1, Beta">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">Minecraft Versionen</label>
+                            <div class="flex flex-wrap gap-2 max-h-24 overflow-y-auto p-2 bg-gray-700/50 rounded-lg">
+                                ${mcVersions.map(v => `
+                                    <label class="flex items-center space-x-1 px-2 py-1 bg-gray-600 rounded cursor-pointer hover:bg-gray-500">
+                                        <input type="checkbox" name="editMcVersion" value="${v}" ${item.mcVersions && item.mcVersions.includes(v) ? 'checked' : ''} class="accent-green-500">
+                                        <span class="text-sm">${v}</span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="border-t border-gray-600 pt-4">
+                            <h3 class="font-bold text-yellow-400 mb-3"><i class="fas fa-sync mr-2"></i>Datei-Update (optional)</h3>
+                            <p class="text-gray-500 text-xs mb-3">Lade eine neue Version deiner Datei hoch. Die alte Datei wird ersetzt.</p>
+                            
+                            <div class="bg-gray-700/50 rounded-lg p-3 mb-3">
+                                <p class="text-sm text-gray-400">Aktuelle Datei: <span class="text-white">${item.fileName || 'Keine'}</span></p>
+                                <p class="text-sm text-gray-400">Größe: <span class="text-white">${item.fileSize || 'N/A'}</span></p>
+                            </div>
+                            
+                            <div class="border-2 border-dashed border-gray-600 rounded-lg p-4 text-center hover:border-yellow-500 transition cursor-pointer" onclick="document.getElementById('editFileInput').click()">
+                                <i class="fas fa-cloud-upload-alt text-2xl text-gray-500 mb-2"></i>
+                                <p class="text-gray-400 text-sm">Neue Datei hochladen (optional)</p>
+                                <input type="file" id="editFileInput" class="hidden" accept=".jar,.zip,.sk,.yml,.json,.mcpack,.mcworld">
+                            </div>
+                            <p id="editFileName" class="mt-2 text-yellow-400 text-sm"></p>
+                        </div>
+                        
+                        <div class="border-t border-gray-600 pt-4">
+                            <h3 class="font-bold text-blue-400 mb-3"><i class="fas fa-image mr-2"></i>Vorschaubild ändern (optional)</h3>
+                            
+                            <div class="border-2 border-dashed border-gray-600 rounded-lg p-4 text-center hover:border-blue-500 transition cursor-pointer" onclick="document.getElementById('editImageInput').click()">
+                                <i class="fas fa-image text-2xl text-gray-500 mb-2"></i>
+                                <p class="text-gray-400 text-sm">Neues Vorschaubild (optional)</p>
+                                <input type="file" id="editImageInput" class="hidden" accept="image/*">
+                            </div>
+                            <div id="editImagePreview" class="mt-2 hidden">
+                                <img id="editPreviewImg" class="max-h-32 mx-auto rounded-lg">
+                            </div>
+                        </div>
                     </div>
-                    <div class="flex gap-3 mt-6">
+                    
+                    <div class="flex gap-3 mt-6 sticky bottom-0 bg-gray-800 pt-4">
                         <button type="button" onclick="closeModal()" class="flex-1 py-3 bg-gray-600 rounded-lg font-bold">Abbrechen</button>
-                        <button type="submit" class="flex-1 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold">Speichern</button>
+                        <button type="submit" class="flex-1 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold">
+                            <i class="fas fa-save mr-2"></i>Speichern
+                        </button>
                     </div>
                 </form>
             `);
+
+            // File input listener
+            setTimeout(() => {
+                document.getElementById('editFileInput').addEventListener('change', (e) => {
+                    if (e.target.files[0]) {
+                        document.getElementById('editFileName').textContent = '✓ Neue Datei: ' + e.target.files[0].name;
+                    }
+                });
+                
+                document.getElementById('editImageInput').addEventListener('change', (e) => {
+                    if (e.target.files[0]) {
+                        const reader = new FileReader();
+                        reader.onload = function(event) {
+                            document.getElementById('editImagePreview').classList.remove('hidden');
+                            document.getElementById('editPreviewImg').src = event.target.result;
+                        };
+                        reader.readAsDataURL(e.target.files[0]);
+                    }
+                });
+            }, 100);
         }
 
         async function handleEditContent(e, contentId) {
             e.preventDefault();
             
-            await getSupabase().from('content').update({
-                title: document.getElementById('editTitle').value,
-                description: document.getElementById('editDesc').value,
-                category: document.getElementById('editCategory').value,
-                price: parseInt(document.getElementById('editPrice').value) || 0
-            }).eq('id', contentId);
+            const title = document.getElementById('editTitle').value.trim();
+            const description = document.getElementById('editDesc').value.trim();
+            const category = document.getElementById('editCategory').value;
+            const price = parseInt(document.getElementById('editPrice').value) || 0;
+            const version = document.getElementById('editVersion').value.trim() || '1.0';
+            const mcVersions = Array.from(document.querySelectorAll('input[name="editMcVersion"]:checked')).map(c => c.value);
+            const newFile = document.getElementById('editFileInput').files[0];
+            const newImage = document.getElementById('editImageInput').files[0];
 
-            closeModal();
-            Utils.showToast('Inhalt aktualisiert!');
-            await Render.navigate('content-detail');
+            // Zeige Ladeindikator
+            Utils.showToast('Wird aktualisiert...', 'info');
+
+            try {
+                let updateData = {
+                    title,
+                    description,
+                    category,
+                    price,
+                    version,
+                    mc_versions: mcVersions
+                };
+
+                // Neue Datei hochladen falls vorhanden
+                if (newFile) {
+                    if (newFile.size > 50 * 1024 * 1024) {
+                        Utils.showToast('Datei zu groß (max 50MB)', 'error');
+                        return;
+                    }
+                    
+                    Utils.showToast('Lade neue Datei hoch...', 'info');
+                    const fileUrl = await DB.uploadFile(newFile, contentId);
+                    if (fileUrl) {
+                        updateData.file_url = fileUrl;
+                        updateData.file_name = newFile.name;
+                        updateData.file_size = Utils.formatFileSize(newFile.size);
+                    }
+                }
+
+                // Neues Bild hochladen falls vorhanden
+                if (newImage) {
+                    Utils.showToast('Lade neues Bild hoch...', 'info');
+                    const imageUrl = await DB.uploadImage(newImage, contentId, '_updated');
+                    if (imageUrl) {
+                        updateData.image_url = imageUrl;
+                    }
+                }
+
+                // Datenbank aktualisieren
+                const { error } = await getSupabase()
+                    .from('content')
+                    .update(updateData)
+                    .eq('id', contentId);
+
+                if (error) {
+                    console.error('Update error:', error);
+                    Utils.showToast('Fehler beim Aktualisieren: ' + error.message, 'error');
+                    return;
+                }
+
+                closeModal();
+                Utils.showToast('Inhalt erfolgreich aktualisiert!');
+                await Render.navigate('content-detail');
+            } catch (err) {
+                console.error('Edit error:', err);
+                Utils.showToast('Fehler beim Aktualisieren', 'error');
+            }
         }
 
         // ============ USER SETTINGS ============
@@ -2648,6 +3096,37 @@
                 if (await Admin.deleteContent(contentId)) {
                     Utils.showToast('Gelöscht');
                     await Render.navigate('marketplace');
+                }
+            }
+        }
+
+        async function deleteOwnContent(contentId) {
+            const user = DB.getCurrentUser();
+            const allContent = await DB.getContent();
+            const item = allContent.find(c => c.id === contentId);
+            
+            if (!item) {
+                Utils.showToast('Inhalt nicht gefunden', 'error');
+                return;
+            }
+
+            // Prüfen ob User berechtigt ist (Owner oder Admin)
+            const isOwner = item.uploaderId === user.id;
+            const isAdmin = DB.isAdmin(user);
+            
+            if (!isOwner && !isAdmin) {
+                Utils.showToast('Keine Berechtigung', 'error');
+                return;
+            }
+
+            if (confirm('Inhalt wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.')) {
+                try {
+                    await getSupabase().from('content').delete().eq('id', contentId);
+                    Utils.showToast('Inhalt gelöscht');
+                    await Render.navigate('marketplace');
+                } catch (err) {
+                    console.error('Delete error:', err);
+                    Utils.showToast('Fehler beim Löschen', 'error');
                 }
             }
         }
