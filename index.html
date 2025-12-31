@@ -740,7 +740,8 @@
                         .eq('id', content.uploaderId)
                         .single();
                     
-                    if (creator && creator.role !== 'admin') {
+                    // Creator bekommt IMMER Tokens (außer wenn Creator selbst Admin ist)
+                    if (creator && creator.email !== ADMIN_EMAIL) {
                         const creatorNewTokens = (creator.tokens || 0) + content.price;
                         await getSupabase().from('profiles').update({ tokens: creatorNewTokens }).eq('id', content.uploaderId);
 
@@ -749,7 +750,7 @@
                             user_id: content.uploaderId,
                             type: 'sale',
                             amount: content.price,
-                            description: `Verkauf: ${content.title}`
+                            description: `Verkauf: ${content.title}${isAdmin ? ' (Admin-Kauf)' : ''}`
                         });
 
                         // Benachrichtigung an Creator
@@ -757,7 +758,7 @@
                             user_id: content.uploaderId,
                             type: 'sale',
                             title: '💰 Verkauf!',
-                            message: `"${content.title}" wurde gekauft!`,
+                            message: `"${content.title}" wurde für ${content.price} Tokens gekauft!`,
                             token_amount: content.price
                         });
                     }
@@ -993,7 +994,7 @@
                                         <button onclick="Render.navigate('purchases')" class="px-3 py-2 rounded hover:bg-gray-700 transition">
                                             <i class="fas fa-shopping-bag mr-2"></i>Meine Käufe
                                         </button>
-                                        ${DB.isCreator(user) ? `<button onclick="Render.navigate('upload')" class="px-3 py-2 rounded hover:bg-gray-700 transition">
+                                        ${(user.role === 'creator' || user.role === 'admin') ? `<button onclick="Render.navigate('upload')" class="px-3 py-2 rounded hover:bg-gray-700 transition">
                                             <i class="fas fa-upload mr-2"></i>Hochladen
                                         </button>` : ''}
                                         ${isAdmin ? `<button onclick="Render.navigate('admin')" class="px-3 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition"><i class="fas fa-crown mr-2"></i>Admin</button>` : ''}
@@ -1438,8 +1439,8 @@
             upload() {
                 const user = DB.getCurrentUser();
                 const settings = DB.getSettings();
-                const isAdmin = DB.isAdmin(user);
-                const isCreator = DB.isCreator(user);
+                const isAdmin = user.role === 'admin' || user.email === ADMIN_EMAIL;
+                const isCreator = user.role === 'creator' || isAdmin;
                 uploadedGalleryImages = [];
 
                 // Nur Creator und Admins können hochladen
@@ -2552,6 +2553,23 @@
                             <li>Käufe sind endgültig</li>
                             <li>Keine Erstattung</li>
                         </ul>
+                    </div>
+                    <button onclick="closeModal()" class="w-full mt-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg">Schließen</button>
+                `);
+            },
+
+            showKontakt() {
+                showModal(`
+                    <h2 class="text-xl font-bold mb-4"><i class="fas fa-envelope mr-2 text-blue-400"></i>Kontakt</h2>
+                    <div class="text-sm text-gray-300 space-y-4">
+                        <div class="bg-gray-700/50 rounded-lg p-4">
+                            <p class="font-bold mb-2"><i class="fas fa-envelope mr-2 text-green-400"></i>E-Mail</p>
+                            <p>mcmarket.2026@gmail.com</p>
+                        </div>
+                        <div class="bg-gray-700/50 rounded-lg p-4">
+                            <p class="font-bold mb-2"><i class="fas fa-clock mr-2 text-yellow-400"></i>Antwortzeit</p>
+                            <p>Wir antworten in der Regel innerhalb von 24-48 Stunden.</p>
+                        </div>
                     </div>
                     <button onclick="closeModal()" class="w-full mt-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg">Schließen</button>
                 `);
