@@ -753,14 +753,16 @@
                             description: `Verkauf: ${content.title}${isAdmin ? ' (Admin-Kauf)' : ''}`
                         });
 
-                        // Benachrichtigung an Creator
-                        await getSupabase().from('notifications').insert({
-                            user_id: content.uploaderId,
-                            type: 'sale',
-                            title: '💰 Verkauf!',
-                            message: `"${content.title}" wurde für ${content.price} Tokens gekauft!`,
-                            token_amount: content.price
-                        });
+                        // Benachrichtigung an Creator (nur wenn aktiviert)
+                        if (creator.notify_sales !== false) {
+                            await getSupabase().from('notifications').insert({
+                                user_id: content.uploaderId,
+                                type: 'sale',
+                                title: '💰 Verkauf!',
+                                message: `"${content.title}" wurde für ${content.price} Tokens gekauft!`,
+                                token_amount: content.price
+                            });
+                        }
                     }
                 }
 
@@ -797,14 +799,17 @@
                 const newTokens = (targetUser.tokens || 0) + amount;
                 await getSupabase().from('profiles').update({ tokens: newTokens }).eq('id', userId);
 
-                await getSupabase().from('notifications').insert({
-                    user_id: userId,
-                    type: amount > 0 ? 'token_gift' : 'token_remove',
-                    title: amount > 0 ? '🎁 Token-Geschenk!' : '⚠️ Tokens abgezogen',
-                    message: message || (amount > 0 ? `Du hast ${amount} Tokens erhalten!` : `Dir wurden ${Math.abs(amount)} Tokens abgezogen.`),
-                    token_amount: amount,
-                    created_by: user.id
-                });
+                // Benachrichtigung nur wenn aktiviert
+                if (targetUser.notify_tokens !== false) {
+                    await getSupabase().from('notifications').insert({
+                        user_id: userId,
+                        type: amount > 0 ? 'token_gift' : 'token_remove',
+                        title: amount > 0 ? '🎁 Token-Geschenk!' : '⚠️ Tokens abgezogen',
+                        message: message || (amount > 0 ? `Du hast ${amount} Tokens erhalten!` : `Dir wurden ${Math.abs(amount)} Tokens abgezogen.`),
+                        token_amount: amount,
+                        created_by: user.id
+                    });
+                }
 
                 await getSupabase().from('transactions').insert({
                     user_id: userId,
@@ -1042,6 +1047,9 @@
                                                 <button onclick="Render.navigate('my-content'); closeProfileDropdown();" class="w-full text-left px-4 py-2 hover:bg-gray-700 flex items-center">
                                                     <i class="fas fa-box mr-3 text-purple-400"></i>Meine Inhalte
                                                 </button>
+                                                <button onclick="Render.navigate('settings'); closeProfileDropdown();" class="w-full text-left px-4 py-2 hover:bg-gray-700 flex items-center">
+                                                    <i class="fas fa-cog mr-3 text-gray-400"></i>Einstellungen
+                                                </button>
                                                 <button onclick="exportUserData(); closeProfileDropdown();" class="w-full text-left px-4 py-2 hover:bg-gray-700 flex items-center">
                                                     <i class="fas fa-download mr-3 text-green-400"></i>Daten exportieren
                                                 </button>
@@ -1139,6 +1147,7 @@
                     case 'profile': await this.profile(); break;
                     case 'my-content': await this.myContent(); break;
                     case 'content-detail': await this.contentDetail(); break;
+                    case 'settings': await this.userSettings(); break;
                     default: await this.marketplace();
                 }
             },
@@ -1557,6 +1566,75 @@
                         document.getElementById('fileName').textContent = '✓ ' + e.target.files[0].name;
                     }
                 });
+            },
+
+            async userSettings() {
+                const user = DB.getCurrentUser();
+                const isAdmin = DB.isAdmin(user);
+
+                document.getElementById('content').innerHTML = `
+                    <div class="fade-in max-w-2xl mx-auto">
+                        <h1 class="text-3xl font-bold mb-8"><i class="fas fa-cog mr-3 text-gray-400"></i>Einstellungen</h1>
+
+                        <!-- Benachrichtigungen -->
+                        <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700 mb-6">
+                            <h2 class="text-xl font-bold mb-4"><i class="fas fa-bell mr-2 text-yellow-400"></i>Benachrichtigungen</h2>
+                            
+                            <div class="space-y-4">
+                                <label class="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg cursor-pointer hover:bg-gray-700 transition">
+                                    <div>
+                                        <span class="font-bold"><i class="fas fa-shopping-cart mr-2 text-green-400"></i>Verkaufs-Benachrichtigungen</span>
+                                        <p class="text-sm text-gray-400 mt-1">Erhalte eine Nachricht wenn jemand deinen Inhalt kauft</p>
+                                    </div>
+                                    <input type="checkbox" id="notifySales" ${user.notify_sales !== false ? 'checked' : ''} onchange="updateUserSetting('notify_sales', this.checked)" class="w-6 h-6 accent-green-500">
+                                </label>
+                                
+                                <label class="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg cursor-pointer hover:bg-gray-700 transition">
+                                    <div>
+                                        <span class="font-bold"><i class="fas fa-coins mr-2 text-yellow-400"></i>Token-Benachrichtigungen</span>
+                                        <p class="text-sm text-gray-400 mt-1">Erhalte eine Nachricht wenn du Tokens erhältst oder verlierst</p>
+                                    </div>
+                                    <input type="checkbox" id="notifyTokens" ${user.notify_tokens !== false ? 'checked' : ''} onchange="updateUserSetting('notify_tokens', this.checked)" class="w-6 h-6 accent-green-500">
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Datenschutz -->
+                        <div class="bg-gray-800/50 rounded-xl p-6 border border-gray-700 mb-6">
+                            <h2 class="text-xl font-bold mb-4"><i class="fas fa-shield-alt mr-2 text-blue-400"></i>Datenschutz & Daten</h2>
+                            
+                            <div class="space-y-4">
+                                <button onclick="exportUserData()" class="w-full p-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition flex items-center justify-center">
+                                    <i class="fas fa-download mr-2"></i>Alle meine Daten exportieren (DSGVO)
+                                </button>
+                                
+                                <div class="p-4 bg-gray-700/50 rounded-lg">
+                                    <p class="text-sm text-gray-400">
+                                        <i class="fas fa-info-circle mr-2 text-blue-400"></i>
+                                        Du kannst jederzeit alle über dich gespeicherten Daten herunterladen. 
+                                        Die Datei enthält dein Profil, Käufe, Transaktionen und hochgeladene Inhalte.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Account-Aktionen -->
+                        <div class="bg-red-500/10 rounded-xl p-6 border border-red-500/50">
+                            <h2 class="text-xl font-bold mb-4 text-red-400"><i class="fas fa-exclamation-triangle mr-2"></i>Gefahrenzone</h2>
+                            
+                            <div class="space-y-4">
+                                <button onclick="showDeleteAccountModal()" class="w-full p-4 bg-red-600 hover:bg-red-700 rounded-lg font-bold transition flex items-center justify-center">
+                                    <i class="fas fa-trash mr-2"></i>Account löschen
+                                </button>
+                                
+                                <p class="text-sm text-gray-400">
+                                    <i class="fas fa-warning mr-2 text-red-400"></i>
+                                    Das Löschen deines Accounts ist endgültig und kann nicht rückgängig gemacht werden.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
             },
 
             async profile() {
@@ -2140,6 +2218,90 @@
             closeModal();
             Utils.showToast('Inhalt aktualisiert!');
             await Render.navigate('content-detail');
+        }
+
+        // ============ USER SETTINGS ============
+        async function updateUserSetting(key, value) {
+            const user = DB.getCurrentUser();
+            if (!user) return;
+
+            const { error } = await getSupabase()
+                .from('profiles')
+                .update({ [key]: value })
+                .eq('id', user.id);
+
+            if (!error) {
+                currentUserData[key] = value;
+                Utils.showToast('Einstellung gespeichert!');
+            } else {
+                Utils.showToast('Fehler beim Speichern', 'error');
+            }
+        }
+
+        function showDeleteAccountModal() {
+            const user = DB.getCurrentUser();
+            if (DB.isAdmin(user)) {
+                Utils.showToast('Admin-Account kann nicht gelöscht werden', 'error');
+                return;
+            }
+
+            showModal(`
+                <h2 class="text-xl font-bold mb-4 text-red-500"><i class="fas fa-exclamation-triangle mr-2"></i>Account löschen</h2>
+                <div class="bg-red-500/20 border border-red-500 rounded-lg p-4 mb-4">
+                    <p class="text-red-300"><strong>Warnung!</strong> Diese Aktion kann nicht rückgängig gemacht werden.</p>
+                    <ul class="text-sm text-red-200 mt-2 list-disc list-inside">
+                        <li>Alle deine Daten werden gelöscht</li>
+                        <li>Deine Käufe gehen verloren</li>
+                        <li>Deine hochgeladenen Inhalte werden entfernt</li>
+                        <li>Deine Tokens verfallen</li>
+                    </ul>
+                </div>
+                <form onsubmit="handleDeleteAccount(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Tippe "LÖSCHEN" zur Bestätigung</label>
+                            <input type="text" id="deleteConfirmText" required placeholder="LÖSCHEN" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
+                        </div>
+                        <div class="flex gap-3">
+                            <button type="button" onclick="closeModal()" class="flex-1 py-3 bg-gray-600 rounded-lg font-bold">Abbrechen</button>
+                            <button type="submit" class="flex-1 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold">Endgültig löschen</button>
+                        </div>
+                    </div>
+                </form>
+            `);
+        }
+
+        async function handleDeleteAccount(e) {
+            e.preventDefault();
+            const confirmText = document.getElementById('deleteConfirmText').value;
+            
+            if (confirmText !== 'LÖSCHEN') {
+                Utils.showToast('Bitte "LÖSCHEN" eingeben', 'error');
+                return;
+            }
+
+            const user = DB.getCurrentUser();
+            
+            try {
+                // Alle User-Daten löschen
+                await getSupabase().from('notifications').delete().eq('user_id', user.id);
+                await getSupabase().from('transactions').delete().eq('user_id', user.id);
+                await getSupabase().from('purchases').delete().eq('user_id', user.id);
+                await getSupabase().from('content').delete().eq('uploader_id', user.id);
+                await getSupabase().from('profiles').delete().eq('id', user.id);
+                
+                // Auth User löschen
+                await getSupabase().auth.signOut();
+                
+                currentUserData = null;
+                closeModal();
+                Utils.showToast('Account gelöscht', 'info');
+                currentView = 'login';
+                Render.app();
+            } catch (err) {
+                console.error('Delete account error:', err);
+                Utils.showToast('Fehler beim Löschen', 'error');
+            }
         }
 
         // ============ DSGVO DATA EXPORT ============
