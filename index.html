@@ -702,36 +702,78 @@
                 const allContent = await DB.getContent();
                 const content = allContent.find(c => c.id === contentId);
                 const settings = DB.getSettings();
+                const isAdmin = DB.isAdmin(user);
 
                 if (!user || !content) return false;
                 
-                if (DB.isAdmin(user)) return true;
-                if (!settings.salesEnabled) return false;
-                if ((user.tokens || 0) < content.price) return false;
-
+                // Prüfen ob bereits gekauft
                 const purchases = await DB.getPurchases();
                 if (purchases.find(p => p.contentId === contentId)) return 'already';
 
-                const newTokens = (user.tokens || 0) - content.price;
-                await getSupabase().from('profiles').update({ tokens: newTokens }).eq('id', user.id);
-                currentUserData.tokens = newTokens;
+                // Verkäufe müssen aktiviert sein (außer für Admin)
+                if (!settings.salesEnabled && !isAdmin) return false;
+                
+                // Preis prüfen (Admin zahlt nichts)
+                if (!isAdmin && (user.tokens || 0) < content.price) return false;
 
+                // Tokens vom Käufer abziehen (nur wenn kein Admin)
+                if (!isAdmin) {
+                    const newTokens = (user.tokens || 0) - content.price;
+                    await getSupabase().from('profiles').update({ tokens: newTokens }).eq('id', user.id);
+                    currentUserData.tokens = newTokens;
+
+                    // Transaktion für Käufer
+                    await getSupabase().from('transactions').insert({
+                        user_id: user.id,
+                        type: 'purchase',
+                        amount: -content.price,
+                        description: `Kauf: ${content.title}`
+                    });
+                }
+
+                // IMMER Tokens an Creator geben (auch wenn Admin kauft!)
+                if (content.price > 0 && content.uploaderId && content.uploaderId !== user.id) {
+                    // Creator Tokens geben
+                    const { data: creator } = await getSupabase()
+                        .from('profiles')
+                        .select('*')
+                        .eq('id', content.uploaderId)
+                        .single();
+                    
+                    if (creator && creator.role !== 'admin') {
+                        const creatorNewTokens = (creator.tokens || 0) + content.price;
+                        await getSupabase().from('profiles').update({ tokens: creatorNewTokens }).eq('id', content.uploaderId);
+
+                        // Transaktion für Creator
+                        await getSupabase().from('transactions').insert({
+                            user_id: content.uploaderId,
+                            type: 'sale',
+                            amount: content.price,
+                            description: `Verkauf: ${content.title}`
+                        });
+
+                        // Benachrichtigung an Creator
+                        await getSupabase().from('notifications').insert({
+                            user_id: content.uploaderId,
+                            type: 'sale',
+                            title: '💰 Verkauf!',
+                            message: `"${content.title}" wurde gekauft!`,
+                            token_amount: content.price
+                        });
+                    }
+                }
+
+                // Kauf speichern
                 await getSupabase().from('purchases').insert({
                     user_id: user.id,
                     content_id: contentId,
-                    price: content.price
+                    price: isAdmin ? 0 : content.price
                 });
 
+                // Download-Zähler erhöhen
                 await getSupabase().from('content').update({ 
                     downloads: (content.downloads || 0) + 1 
                 }).eq('id', contentId);
-
-                await getSupabase().from('transactions').insert({
-                    user_id: user.id,
-                    type: 'purchase',
-                    amount: -content.price,
-                    description: `Kauf: ${content.title}`
-                });
 
                 return true;
             }
@@ -951,9 +993,9 @@
                                         <button onclick="Render.navigate('purchases')" class="px-3 py-2 rounded hover:bg-gray-700 transition">
                                             <i class="fas fa-shopping-bag mr-2"></i>Meine Käufe
                                         </button>
-                                        <button onclick="Render.navigate('upload')" class="px-3 py-2 rounded hover:bg-gray-700 transition">
+                                        ${DB.isCreator(user) ? `<button onclick="Render.navigate('upload')" class="px-3 py-2 rounded hover:bg-gray-700 transition">
                                             <i class="fas fa-upload mr-2"></i>Hochladen
-                                        </button>
+                                        </button>` : ''}
                                         ${isAdmin ? `<button onclick="Render.navigate('admin')" class="px-3 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition"><i class="fas fa-crown mr-2"></i>Admin</button>` : ''}
                                     </div>
                                 </div>
@@ -1238,11 +1280,12 @@
                             <div class="p-8">
                                 <div class="flex flex-col md:flex-row justify-between gap-6 mb-8">
                                     <div class="flex-1">
-                                        <h1 class="text-3xl font-bold mb-2">${item.title}</h1>
+                                        <h1 class="text-3xl font-bold mb-2">${item.title} ${item.version ? `<span class="text-lg text-gray-400">v${item.version}</span>` : ''}</h1>
                                         <p class="text-gray-400 mb-4">von <span class="text-green-400">${item.uploaderName || 'Unbekannt'}</span> • ${Utils.formatDate(item.createdAt)}</p>
                                         <div class="flex items-center gap-4 text-sm text-gray-400">
                                             <span><i class="fas fa-download mr-1"></i>${item.downloads || 0} Downloads</span>
                                             <span><i class="fas fa-file mr-1"></i>${item.fileSize || 'N/A'}</span>
+                                            ${item.version ? `<span><i class="fas fa-code-branch mr-1"></i>Version ${item.version}</span>` : ''}
                                         </div>
                                     </div>
                                     <div class="flex flex-col items-end gap-3">
@@ -1395,9 +1438,24 @@
             upload() {
                 const user = DB.getCurrentUser();
                 const settings = DB.getSettings();
+                const isAdmin = DB.isAdmin(user);
+                const isCreator = DB.isCreator(user);
                 uploadedGalleryImages = [];
 
-                if (!settings.uploadsEnabled && !DB.isAdmin(user)) {
+                // Nur Creator und Admins können hochladen
+                if (!isCreator) {
+                    document.getElementById('content').innerHTML = `
+                        <div class="text-center py-16">
+                            <i class="fas fa-lock text-5xl text-red-500 mb-4"></i>
+                            <p class="text-xl mb-2">Keine Berechtigung</p>
+                            <p class="text-gray-400">Nur Creator und Admins können Inhalte hochladen.</p>
+                            <p class="text-gray-500 text-sm mt-4">Kontaktiere einen Admin, um Creator zu werden.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                if (!settings.uploadsEnabled && !isAdmin) {
                     document.getElementById('content').innerHTML = `
                         <div class="text-center py-16">
                             <i class="fas fa-lock text-5xl text-red-500 mb-4"></i>
@@ -1433,9 +1491,14 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-sm text-gray-400 mb-2">Preis (Tokens)</label>
-                                    <input type="number" id="uploadPrice" min="0" value="0" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
+                                    <label class="block text-sm text-gray-400 mb-2">Version *</label>
+                                    <input type="text" id="uploadVersion" required placeholder="z.B. 1.0, Beta, Alpha" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
                                 </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm text-gray-400 mb-2">Preis (Tokens)</label>
+                                <input type="number" id="uploadPrice" min="0" value="0" class="w-full px-4 py-3 bg-gray-700 rounded-lg">
                             </div>
 
                             <div>
@@ -1608,20 +1671,63 @@
             },
 
             footer() {
+                const user = DB.getCurrentUser();
+                const isCreator = DB.isCreator(user);
+                
                 return `
                     <footer class="bg-gray-900/95 border-t border-gray-800 mt-16">
-                        <div class="container mx-auto px-4 py-8">
-                            <div class="flex flex-col md:flex-row justify-between items-center gap-4">
-                                <div class="flex items-center space-x-2">
-                                    <i class="fas fa-cube text-green-500"></i>
-                                    <span class="font-bold">MCMarket</span>
+                        <div class="container mx-auto px-4 py-10">
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
+                                <!-- Brand -->
+                                <div class="col-span-2 md:col-span-1">
+                                    <div class="flex items-center space-x-2 mb-3">
+                                        <i class="fas fa-cube text-xl text-green-500"></i>
+                                        <span class="text-lg font-bold">MCMarket</span>
+                                    </div>
+                                    <p class="text-gray-500 text-xs mb-4">Dein Marktplatz für Minecraft Plugins, Mods, Texturepacks und Welten.</p>
                                 </div>
-                                <div class="flex space-x-4 text-sm text-gray-500">
-                                    <a href="#" onclick="Legal.showImpressum(); return false;" class="hover:text-white">Impressum</a>
-                                    <a href="#" onclick="Legal.showDatenschutz(); return false;" class="hover:text-white">Datenschutz</a>
-                                    <a href="#" onclick="Legal.showAGB(); return false;" class="hover:text-white">AGB</a>
+                                
+                                <!-- Navigation -->
+                                <div>
+                                    <h4 class="text-white text-sm font-semibold mb-3">Navigation</h4>
+                                    <ul class="space-y-2">
+                                        <li><a href="#" onclick="Render.navigate('marketplace'); return false;" class="text-gray-500 hover:text-white text-xs">Marktplatz</a></li>
+                                        <li><a href="#" onclick="Render.navigate('purchases'); return false;" class="text-gray-500 hover:text-white text-xs">Meine Käufe</a></li>
+                                        <li><a href="#" onclick="Render.navigate('profile'); return false;" class="text-gray-500 hover:text-white text-xs">Profil</a></li>
+                                        ${isCreator ? `<li><a href="#" onclick="Render.navigate('upload'); return false;" class="text-gray-500 hover:text-white text-xs">Hochladen</a></li>` : ''}
+                                    </ul>
                                 </div>
-                                <p class="text-xs text-gray-600">© ${new Date().getFullYear()} MCMarket</p>
+                                
+                                <!-- Kategorien -->
+                                <div>
+                                    <h4 class="text-white text-sm font-semibold mb-3">Kategorien</h4>
+                                    <ul class="space-y-2">
+                                        <li><a href="#" onclick="filterState.category='plugin'; Render.navigate('marketplace'); return false;" class="text-gray-500 hover:text-white text-xs flex items-center"><i class="fas fa-puzzle-piece w-4 text-green-500 mr-2"></i>Plugins</a></li>
+                                        <li><a href="#" onclick="filterState.category='mod'; Render.navigate('marketplace'); return false;" class="text-gray-500 hover:text-white text-xs flex items-center"><i class="fas fa-cube w-4 text-blue-500 mr-2"></i>Mods</a></li>
+                                        <li><a href="#" onclick="filterState.category='texturepack'; Render.navigate('marketplace'); return false;" class="text-gray-500 hover:text-white text-xs flex items-center"><i class="fas fa-image w-4 text-purple-500 mr-2"></i>Texturepacks</a></li>
+                                        <li><a href="#" onclick="filterState.category='world'; Render.navigate('marketplace'); return false;" class="text-gray-500 hover:text-white text-xs flex items-center"><i class="fas fa-globe w-4 text-cyan-500 mr-2"></i>Welten</a></li>
+                                    </ul>
+                                </div>
+                                
+                                <!-- Rechtliches -->
+                                <div>
+                                    <h4 class="text-white text-sm font-semibold mb-3">Rechtliches</h4>
+                                    <ul class="space-y-2">
+                                        <li><a href="#" onclick="Legal.showImpressum(); return false;" class="text-gray-500 hover:text-white text-xs">Impressum</a></li>
+                                        <li><a href="#" onclick="Legal.showDatenschutz(); return false;" class="text-gray-500 hover:text-white text-xs">Datenschutz</a></li>
+                                        <li><a href="#" onclick="Legal.showAGB(); return false;" class="text-gray-500 hover:text-white text-xs">AGB</a></li>
+                                        <li><a href="#" onclick="Legal.showKontakt(); return false;" class="text-gray-500 hover:text-white text-xs">Kontakt</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                            
+                            <!-- Bottom Bar -->
+                            <div class="border-t border-gray-800 pt-6 flex flex-col md:flex-row justify-between items-center gap-3">
+                                <p class="text-xs text-gray-600">© ${new Date().getFullYear()} MCMarket. Alle Rechte vorbehalten.</p>
+                                <div class="flex items-center gap-4 text-xs text-gray-600">
+                                    <span class="flex items-center"><i class="fas fa-lock text-green-600 mr-1"></i>SSL</span>
+                                    <span class="flex items-center"><i class="fas fa-shield-alt text-blue-600 mr-1"></i>DSGVO</span>
+                                </div>
                             </div>
                         </div>
                     </footer>
@@ -1751,6 +1857,7 @@
                                             <th class="text-left p-4">Benutzer</th>
                                             <th class="text-left p-4">Rolle</th>
                                             <th class="text-left p-4">Tokens</th>
+                                            <th class="text-left p-4">Auto-Approve</th>
                                             <th class="text-left p-4">Aktionen</th>
                                         </tr>
                                     </thead>
@@ -1769,6 +1876,14 @@
                                                     </select>
                                                 </td>
                                                 <td class="p-4 text-yellow-400 font-bold">${u.role === 'admin' ? '∞' : Utils.formatTokens(u.tokens)}</td>
+                                                <td class="p-4">
+                                                    ${u.role === 'creator' ? `
+                                                        <label class="flex items-center cursor-pointer">
+                                                            <input type="checkbox" ${u.auto_approve ? 'checked' : ''} onchange="adminToggleAutoApprove('${u.id}', this.checked)" class="w-5 h-5 accent-green-500">
+                                                            <span class="ml-2 text-sm ${u.auto_approve ? 'text-green-400' : 'text-gray-400'}">${u.auto_approve ? 'Ja' : 'Nein'}</span>
+                                                        </label>
+                                                    ` : '<span class="text-gray-500">-</span>'}
+                                                </td>
                                                 <td class="p-4">
                                                     ${u.email !== ADMIN_EMAIL ? `
                                                         <button onclick="adminDeleteUser('${u.id}')" class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded">
@@ -2201,6 +2316,7 @@
             const title = document.getElementById('uploadTitle').value.trim();
             const description = document.getElementById('uploadDesc').value.trim();
             const category = document.getElementById('uploadCategory').value;
+            const version = document.getElementById('uploadVersion').value.trim() || '1.0';
             const price = parseInt(document.getElementById('uploadPrice').value) || 0;
             const mcVersions = Array.from(document.querySelectorAll('input[name="mcVersion"]:checked')).map(c => c.value);
             const file = document.getElementById('fileInput').files[0];
@@ -2253,12 +2369,17 @@
                     if (url) galleryUrls.push(url);
                 }
 
+                // Prüfen ob User auto_approve hat
+                const userHasAutoApprove = user.auto_approve === true;
+                const shouldApprove = DB.isAdmin(user) || userHasAutoApprove || !settings.requireApproval;
+
                 // Content in Datenbank speichern
                 const { error } = await getSupabase().from('content').insert({
                     id: contentId,
                     title,
                     description,
                     category,
+                    version,
                     price,
                     mc_versions: mcVersions,
                     visibility: 'public',
@@ -2270,7 +2391,7 @@
                     uploader_id: user.id,
                     uploader_name: user.username || 'Unbekannt',
                     downloads: 0,
-                    approved: DB.isAdmin(user) || !settings.requireApproval
+                    approved: shouldApprove
                 });
 
                 if (error) {
@@ -2330,7 +2451,17 @@
         async function adminSetUserRole(userId, role) {
             if (await Admin.setUserRole(userId, role)) {
                 Utils.showToast('Rolle geändert');
+                showAdminTab('users');
             }
+        }
+
+        async function adminToggleAutoApprove(userId, enabled) {
+            const user = DB.getCurrentUser();
+            if (!DB.isAdmin(user)) return;
+            
+            await getSupabase().from('profiles').update({ auto_approve: enabled }).eq('id', userId);
+            await DB.addAdminLog('toggle_auto_approve', 'user', userId, { enabled });
+            Utils.showToast(enabled ? 'Auto-Genehmigung aktiviert' : 'Auto-Genehmigung deaktiviert');
         }
 
         async function adminDeleteUser(userId) {
