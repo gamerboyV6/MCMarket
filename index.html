@@ -6,7 +6,6 @@
     <title>MCMarket - Minecraft Content Marketplace</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
             --primary-green: #22c55e;
@@ -147,21 +146,34 @@
     </style>
 </head>
 <body class="gradient-bg min-h-screen text-white">
+    <!-- Loading Screen -->
     <div id="loadingScreen">
         <div class="spinner mb-4"></div>
         <p class="text-gray-400">Lade MCMarket...</p>
         <p id="loadingStatus" class="text-xs text-gray-500 mt-2"></p>
     </div>
+
+    <!-- App Container -->
     <div id="app"></div>
 
+    <!-- Supabase laden -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
     <script>
         // ============ SUPABASE CONFIG ============
         const SUPABASE_URL = 'https://lrjyxbwwqenczqucdtgc.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxyanl4Ynd3cWVuY3pxdWNkdGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNDIzMTQsImV4cCI6MjA4MjYxODMxNH0.j_r0DuYk8HlX-uCxU1hxDCkGYKjBK2dKIIvEObHTefQ';
         
-        // Supabase Client erstellen
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        console.log('✅ Supabase Client erstellt');
+        // Supabase Client erstellen (nur einmal!)
+        let supabaseClient = null;
+        
+        function getSupabase() {
+            if (!supabaseClient) {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log('✅ Supabase Client erstellt');
+            }
+            return supabaseClient;
+        }
         
         // Admin E-Mail
         const ADMIN_EMAIL = 'mcmarket.2026@gmail.com';
@@ -187,11 +199,11 @@
             welcomeTokens: 50
         };
 
-        // ============ LOADING STATUS ============
+        // ============ LOADING HELPERS ============
         function setLoadingStatus(text) {
             const el = document.getElementById('loadingStatus');
             if (el) el.textContent = text;
-            console.log('📌 Status:', text);
+            console.log('📌 ' + text);
         }
 
         function hideLoading() {
@@ -216,15 +228,16 @@
             }
         }
 
-        // ============ DATABASE ============
+        // ============ DATABASE FUNCTIONS ============
         const DB = {
             async init() {
                 setLoadingStatus('Verbinde mit Datenbank...');
+                const sb = getSupabase();
                 cachedSettings = defaultSettings;
 
                 try {
                     // Session prüfen
-                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+                    const { data: { session }, error: sessionError } = await sb.auth.getSession();
                     
                     if (sessionError) {
                         console.log('⚠️ Session Fehler:', sessionError);
@@ -234,7 +247,7 @@
                     
                     if (session && session.user) {
                         setLoadingStatus('Lade Profil...');
-                        const { data: profile, error: profileError } = await supabase
+                        const { data: profile, error: profileError } = await sb
                             .from('profiles')
                             .select('*')
                             .eq('id', session.user.id)
@@ -250,7 +263,7 @@
                     
                     // Settings laden
                     setLoadingStatus('Lade Einstellungen...');
-                    const { data: settings, error: settingsError } = await supabase
+                    const { data: settings, error: settingsError } = await sb
                         .from('settings')
                         .select('*')
                         .eq('id', 1)
@@ -281,7 +294,7 @@
             
             async getContent() { 
                 try {
-                    const { data, error } = await supabase
+                    const { data, error } = await getSupabase()
                         .from('content')
                         .select('*')
                         .order('created_at', { ascending: false });
@@ -308,7 +321,7 @@
             
             async getUsers() { 
                 try {
-                    const { data } = await supabase.from('profiles').select('*');
+                    const { data } = await getSupabase().from('profiles').select('*');
                     return data || [];
                 } catch (e) {
                     return [];
@@ -318,7 +331,7 @@
             async getPurchases() { 
                 if (!currentUserData) return [];
                 try {
-                    const { data } = await supabase
+                    const { data } = await getSupabase()
                         .from('purchases')
                         .select('*')
                         .eq('user_id', currentUserData.id);
@@ -337,7 +350,7 @@
             async getTransactions() { 
                 if (!currentUserData) return [];
                 try {
-                    const { data } = await supabase
+                    const { data } = await getSupabase()
                         .from('transactions')
                         .select('*')
                         .eq('user_id', currentUserData.id)
@@ -483,7 +496,7 @@
         const Auth = {
             async login(email, password) {
                 try {
-                    const { data, error } = await supabase.auth.signInWithPassword({
+                    const { data, error } = await getSupabase().auth.signInWithPassword({
                         email: email,
                         password: password
                     });
@@ -494,7 +507,7 @@
                     }
                     
                     if (data.user) {
-                        const { data: profile } = await supabase
+                        const { data: profile } = await getSupabase()
                             .from('profiles')
                             .select('*')
                             .eq('id', data.user.id)
@@ -517,7 +530,7 @@
                     const settings = DB.getSettings();
                     if (!settings.registrationEnabled) return { error: 'Registrierung deaktiviert' };
                     
-                    const { data, error } = await supabase.auth.signUp({
+                    const { data, error } = await getSupabase().auth.signUp({
                         email: email,
                         password: password,
                         options: {
@@ -536,7 +549,7 @@
                         // Warten bis Profil erstellt wurde (durch Trigger)
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         
-                        const { data: profile } = await supabase
+                        const { data: profile } = await getSupabase()
                             .from('profiles')
                             .select('*')
                             .eq('id', data.user.id)
@@ -556,7 +569,7 @@
             },
 
             async logout() {
-                await supabase.auth.signOut();
+                await getSupabase().auth.signOut();
                 currentUserData = null;
             },
 
@@ -568,7 +581,7 @@
                 const settings = DB.getSettings();
                 const newTokens = (user.tokens || 0) + settings.tokenAmount;
                 
-                const { error } = await supabase
+                const { error } = await getSupabase()
                     .from('profiles')
                     .update({ 
                         tokens: newTokens,
@@ -580,7 +593,7 @@
                     currentUserData.tokens = newTokens;
                     currentUserData.last_token_claim = new Date().toISOString();
                     
-                    await supabase.from('transactions').insert({
+                    await getSupabase().from('transactions').insert({
                         user_id: user.id,
                         type: 'earn',
                         amount: settings.tokenAmount,
@@ -619,23 +632,23 @@
 
                 // Tokens abziehen
                 const newTokens = (user.tokens || 0) - content.price;
-                await supabase.from('profiles').update({ tokens: newTokens }).eq('id', user.id);
+                await getSupabase().from('profiles').update({ tokens: newTokens }).eq('id', user.id);
                 currentUserData.tokens = newTokens;
 
                 // Kauf speichern
-                await supabase.from('purchases').insert({
+                await getSupabase().from('purchases').insert({
                     user_id: user.id,
                     content_id: contentId,
                     price: content.price
                 });
 
                 // Downloads erhöhen
-                await supabase.from('content').update({ 
+                await getSupabase().from('content').update({ 
                     downloads: (content.downloads || 0) + 1 
                 }).eq('id', contentId);
 
                 // Transaktion speichern
-                await supabase.from('transactions').insert({
+                await getSupabase().from('transactions').insert({
                     user_id: user.id,
                     type: 'purchase',
                     amount: -content.price,
@@ -1645,7 +1658,7 @@
             }
 
             // Download erhöhen
-            await supabase.from('content').update({ 
+            await getSupabase().from('content').update({ 
                 downloads: (item.downloads || 0) + 1 
             }).eq('id', id);
 
@@ -1705,7 +1718,7 @@
                     const settings = DB.getSettings();
                     const contentId = Utils.generateId();
                     
-                    const { data, error } = await supabase.from('content').insert({
+                    const { data, error } = await getSupabase().from('content').insert({
                         id: contentId,
                         title: title,
                         description: description,
@@ -1752,7 +1765,7 @@
 
         // ============ ADMIN FUNCTIONS ============
         async function adminApproveContent(contentId) {
-            const { error } = await supabase.from('content').update({ approved: true }).eq('id', contentId);
+            const { error } = await getSupabase().from('content').update({ approved: true }).eq('id', contentId);
             if (!error) {
                 Utils.showToast('Genehmigt');
                 await Render.navigate('admin');
@@ -1763,7 +1776,7 @@
 
         async function adminDeleteContent(contentId) {
             if (!confirm('Inhalt wirklich löschen?')) return;
-            const { error } = await supabase.from('content').delete().eq('id', contentId);
+            const { error } = await getSupabase().from('content').delete().eq('id', contentId);
             if (!error) {
                 Utils.showToast('Gelöscht');
                 await Render.navigate('admin');
