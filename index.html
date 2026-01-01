@@ -360,7 +360,8 @@
             welcomeTokens: 50,
             afkEnabled: true,
             afkTokensPerMinute: 5,
-            afkMinSeconds: 60
+            afkMinSeconds: 60,
+            afkTheme: 'galaxy'
         };
 
         // ============ AFK STATE ============
@@ -441,7 +442,8 @@
                             welcomeTokens: settings.welcome_tokens,
                             afkEnabled: settings.afk_enabled !== false,
                             afkTokensPerMinute: settings.afk_tokens_per_minute || 5,
-                            afkMinSeconds: settings.afk_min_seconds || 60
+                            afkMinSeconds: settings.afk_min_seconds || 60,
+                            afkTheme: settings.afk_theme || 'galaxy'
                         };
                     }
                     
@@ -2442,6 +2444,69 @@
                                     </p>
                                 </div>
                             </div>
+
+                            <!-- AFK Design Auswahl -->
+                            <div class="border-t border-gray-700 pt-6">
+                                <h4 class="font-bold mb-4"><i class="fas fa-palette mr-2 text-pink-400"></i>AFK-Design für alle User</h4>
+                                <p class="text-gray-400 text-sm mb-4">Wähle das Design das alle User im AFK-Modus sehen:</p>
+                                
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <button onclick="updateAfkTheme('galaxy')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${(settings.afkTheme || 'galaxy') === 'galaxy' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-purple-500'}">
+                                        <div class="text-3xl mb-2">🌌</div>
+                                        <div class="font-bold text-sm">Galaxy</div>
+                                        <div class="text-xs text-gray-400">Weltraum</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('ocean')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'ocean' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-blue-500'}">
+                                        <div class="text-3xl mb-2">🌊</div>
+                                        <div class="font-bold text-sm">Ocean</div>
+                                        <div class="text-xs text-gray-400">Unterwasser</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('forest')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'forest' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-green-500'}">
+                                        <div class="text-3xl mb-2">🌲</div>
+                                        <div class="font-bold text-sm">Forest</div>
+                                        <div class="text-xs text-gray-400">Wald</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('nether')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'nether' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-red-500'}">
+                                        <div class="text-3xl mb-2">🔥</div>
+                                        <div class="font-bold text-sm">Nether</div>
+                                        <div class="text-xs text-gray-400">Lava & Feuer</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('winter')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'winter' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-cyan-500'}">
+                                        <div class="text-3xl mb-2">❄️</div>
+                                        <div class="font-bold text-sm">Winter</div>
+                                        <div class="text-xs text-gray-400">Schnee & Eis</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('sakura')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'sakura' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-pink-500'}">
+                                        <div class="text-3xl mb-2">🌸</div>
+                                        <div class="font-bold text-sm">Sakura</div>
+                                        <div class="text-xs text-gray-400">Kirschblüten</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('retro')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'retro' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-yellow-500'}">
+                                        <div class="text-3xl mb-2">🎮</div>
+                                        <div class="font-bold text-sm">Retro</div>
+                                        <div class="text-xs text-gray-400">8-Bit Pixel</div>
+                                    </button>
+                                    
+                                    <button onclick="updateAfkTheme('rainbow')" class="p-4 rounded-xl border-2 transition-all hover:scale-105 ${settings.afkTheme === 'rainbow' ? 'border-green-500 bg-green-500/20' : 'border-gray-600 bg-gray-700/50 hover:border-yellow-500'}">
+                                        <div class="text-3xl mb-2">🌈</div>
+                                        <div class="font-bold text-sm">Rainbow</div>
+                                        <div class="text-xs text-gray-400">Regenbogen</div>
+                                    </button>
+                                </div>
+                                
+                                <div class="mt-4 p-4 bg-pink-500/10 border border-pink-500/30 rounded-lg">
+                                    <p class="text-sm text-pink-300">
+                                        <i class="fas fa-palette mr-2"></i>
+                                        <strong>Aktuelles Design:</strong> ${(settings.afkTheme || 'galaxy').charAt(0).toUpperCase() + (settings.afkTheme || 'galaxy').slice(1)} - Alle User sehen dieses Design im AFK-Modus.
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     `;
                     break;
@@ -3292,7 +3357,8 @@
                 welcome_tokens: settings.welcomeTokens,
                 afk_enabled: settings.afkEnabled,
                 afk_tokens_per_minute: settings.afkTokensPerMinute,
-                afk_min_seconds: settings.afkMinSeconds
+                afk_min_seconds: settings.afkMinSeconds,
+                afk_theme: settings.afkTheme
             };
             
             const { error } = await getSupabase()
@@ -3307,6 +3373,12 @@
                 console.error('Settings update error:', error);
                 Utils.showToast('Fehler beim Speichern', 'error');
             }
+        }
+
+        async function updateAfkTheme(theme) {
+            await updateAdminSetting('afkTheme', theme);
+            // Tab neu laden um die Auswahl anzuzeigen
+            showAdminTab('settings');
         }
 
         // ============ AFK FUNCTIONS ============
