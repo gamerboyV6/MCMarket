@@ -3324,90 +3324,123 @@
                 return;
             }
 
+            // Verstecke die Hauptseite
+            document.getElementById('app').style.display = 'none';
+
             // AFK-Seite erstellen
             const afkOverlay = document.createElement('div');
             afkOverlay.id = 'afk-overlay';
-            afkOverlay.className = 'fixed inset-0 z-50';
             afkOverlay.innerHTML = `
-                <div class="afk-container flex flex-col items-center justify-center p-4">
-                    <!-- Sterne Hintergrund -->
-                    <div class="afk-stars"></div>
-                    <div class="afk-stars" style="animation-delay: -2s;"></div>
+                <div class="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 relative overflow-hidden">
+                    <!-- Animated Background -->
+                    <div class="absolute inset-0">
+                        <div class="absolute w-full h-full">
+                            ${Array.from({length: 50}, (_, i) => `
+                                <div class="absolute w-1 h-1 bg-white rounded-full opacity-50" style="left: ${Math.random() * 100}%; top: ${Math.random() * 100}%; animation: twinkle ${2 + Math.random() * 3}s ease-in-out infinite; animation-delay: ${Math.random() * 2}s;"></div>
+                            `).join('')}
+                        </div>
+                        <div class="absolute inset-0 bg-gradient-to-t from-purple-900/50 to-transparent"></div>
+                    </div>
                     
                     <!-- Token Rain Container -->
-                    <div id="tokenRainContainer" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+                    <div id="tokenRainContainer" class="absolute inset-0 pointer-events-none overflow-hidden z-10"></div>
                     
-                    <!-- Hauptinhalt -->
-                    <div class="relative z-10 text-center max-w-lg w-full">
-                        <!-- Hilfe Button -->
-                        <button onclick="showAfkHelp()" class="absolute top-4 right-4 w-10 h-10 bg-gray-800/50 hover:bg-gray-700 rounded-full flex items-center justify-center transition">
-                            <i class="fas fa-question text-gray-400"></i>
+                    <!-- Top Navigation -->
+                    <div class="relative z-30 flex justify-between items-center p-4 md:p-6">
+                        <button id="afkCloseBtn" class="flex items-center gap-2 px-5 py-3 bg-red-500/90 hover:bg-red-600 rounded-xl font-bold transition-all transform hover:scale-105 shadow-lg shadow-red-500/30">
+                            <i class="fas fa-arrow-left"></i>
+                            <span>Zurück</span>
                         </button>
                         
-                        <!-- Schließen Button -->
-                        <button onclick="closeAfkMode()" class="absolute top-4 left-4 px-4 py-2 bg-red-600/80 hover:bg-red-600 rounded-lg transition flex items-center">
-                            <i class="fas fa-times mr-2"></i>Beenden
+                        <button id="afkHelpBtn" class="w-12 h-12 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center transition-all transform hover:scale-105 border border-white/20">
+                            <i class="fas fa-question text-xl text-white/80"></i>
                         </button>
-                        
-                        <!-- Floating Icon -->
-                        <div class="afk-floating mb-8">
-                            <div class="w-32 h-32 mx-auto rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center afk-pulse">
-                                <i class="fas fa-moon text-6xl text-white"></i>
+                    </div>
+                    
+                    <!-- Main Content -->
+                    <div class="relative z-20 flex flex-col items-center justify-center min-h-[calc(100vh-100px)] px-4 -mt-20">
+                        <!-- Floating Minecraft Block -->
+                        <div class="mb-8" style="animation: float 4s ease-in-out infinite;">
+                            <div class="relative">
+                                <div class="w-28 h-28 md:w-36 md:h-36 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-2xl shadow-2xl shadow-emerald-500/50 flex items-center justify-center transform rotate-12" style="animation: afkPulse 2s ease-in-out infinite;">
+                                    <i class="fas fa-gamepad text-5xl md:text-6xl text-white drop-shadow-lg"></i>
+                                </div>
+                                <div class="absolute -top-2 -right-2 w-8 h-8 bg-yellow-400 rounded-full flex items-center justify-center shadow-lg animate-bounce">
+                                    <i class="fas fa-coins text-yellow-800 text-sm"></i>
+                                </div>
                             </div>
                         </div>
                         
-                        <!-- Titel -->
-                        <h1 class="text-4xl font-bold mb-2 afk-glow-text">AFK Modus</h1>
-                        <p class="text-gray-400 mb-8">Entspanne dich und verdiene Tokens!</p>
+                        <!-- Title -->
+                        <h1 class="text-4xl md:text-5xl font-black text-white mb-2 text-center" style="text-shadow: 0 0 30px rgba(168, 85, 247, 0.5);">
+                            AFK TOKEN FARM
+                        </h1>
+                        <p class="text-purple-300 text-lg mb-8 text-center">Lehne dich zurück und sammle Tokens! 🎮</p>
                         
-                        <!-- Token Info Box -->
-                        <div class="bg-gray-800/60 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-purple-500/30">
-                            <div class="flex items-center justify-center gap-2 mb-4">
-                                <i class="fas fa-coins text-2xl text-yellow-400"></i>
-                                <span class="text-yellow-400 text-xl font-bold">+${settings.afkTokensPerMinute} Tokens pro Minute</span>
+                        <!-- Stats Card -->
+                        <div class="w-full max-w-md bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 border border-white/20 shadow-2xl">
+                            <!-- Token Rate -->
+                            <div class="flex items-center justify-center gap-3 mb-6 p-4 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-2xl border border-yellow-500/30">
+                                <div class="w-12 h-12 bg-yellow-500 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-500/50">
+                                    <i class="fas fa-coins text-2xl text-yellow-900"></i>
+                                </div>
+                                <div>
+                                    <p class="text-yellow-300 text-sm">Verdienst pro Minute</p>
+                                    <p class="text-2xl font-black text-yellow-400">+${settings.afkTokensPerMinute} Tokens</p>
+                                </div>
                             </div>
                             
-                            <!-- Progress Ring -->
-                            <div class="relative w-40 h-40 mx-auto mb-4">
-                                <svg class="afk-progress-ring w-full h-full">
-                                    <circle cx="80" cy="80" r="70" stroke="#374151" stroke-width="8" fill="none"/>
-                                    <circle id="afkProgressCircle" cx="80" cy="80" r="70" stroke="#22c55e" stroke-width="8" fill="none" 
-                                        stroke-dasharray="439.8" stroke-dashoffset="439.8" stroke-linecap="round"/>
+                            <!-- Timer Circle -->
+                            <div class="relative w-44 h-44 mx-auto mb-6">
+                                <svg class="w-full h-full transform -rotate-90">
+                                    <circle cx="88" cy="88" r="80" stroke="rgba(255,255,255,0.1)" stroke-width="12" fill="none"/>
+                                    <circle id="afkProgressCircle" cx="88" cy="88" r="80" stroke="url(#gradient)" stroke-width="12" fill="none" 
+                                        stroke-dasharray="502.4" stroke-dashoffset="502.4" stroke-linecap="round"/>
+                                    <defs>
+                                        <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" style="stop-color:#22c55e"/>
+                                            <stop offset="100%" style="stop-color:#10b981"/>
+                                        </linearGradient>
+                                    </defs>
                                 </svg>
                                 <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span id="afkTimer" class="text-3xl font-bold afk-counter">0:00</span>
-                                    <span class="text-xs text-gray-400">Zeit</span>
+                                    <span id="afkTimer" class="text-4xl font-black text-white">0:00</span>
+                                    <span class="text-sm text-purple-300">Aktive Zeit</span>
                                 </div>
                             </div>
                             
-                            <!-- Verdiente Tokens -->
-                            <div class="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-xl p-4 border border-yellow-500/30">
-                                <p class="text-sm text-gray-400 mb-1">Verdient in dieser Session</p>
-                                <div class="flex items-center justify-center gap-2">
-                                    <i class="fas fa-coins text-yellow-400"></i>
-                                    <span id="afkEarnedTokens" class="text-3xl font-bold text-yellow-400">0</span>
-                                    <span class="text-yellow-400">Tokens</span>
+                            <!-- Earned Tokens -->
+                            <div class="bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-2xl p-5 border border-green-500/30">
+                                <p class="text-green-300 text-sm mb-2 text-center">Diese Session verdient</p>
+                                <div class="flex items-center justify-center gap-3">
+                                    <i class="fas fa-gem text-3xl text-green-400"></i>
+                                    <span id="afkEarnedTokens" class="text-5xl font-black text-green-400 transition-all">0</span>
                                 </div>
                             </div>
                         </div>
                         
-                        <!-- Info -->
-                        <p class="text-gray-500 text-sm">
-                            <i class="fas fa-info-circle mr-1"></i>
-                            Lass dieses Fenster offen um Tokens zu verdienen
-                        </p>
-                        
-                        <!-- Dein Token-Stand -->
-                        <div class="mt-6 px-4 py-2 bg-gray-800/40 rounded-lg inline-block">
-                            <span class="text-gray-400">Dein Guthaben: </span>
+                        <!-- Current Balance -->
+                        <div class="mt-6 px-6 py-3 bg-white/5 backdrop-blur-sm rounded-full border border-white/10">
+                            <span class="text-purple-300">Dein Guthaben: </span>
                             <span id="afkTotalTokens" class="font-bold text-yellow-400">${Utils.formatTokens(user.tokens)}</span>
-                            <span class="text-gray-400"> Tokens</span>
+                            <span class="text-purple-300"> Tokens</span>
                         </div>
+                        
+                        <!-- Tip -->
+                        <p class="mt-6 text-purple-400/70 text-sm text-center max-w-sm">
+                            <i class="fas fa-lightbulb mr-1"></i>
+                            Tipp: Du kannst diesen Tab minimieren - Tokens werden trotzdem gesammelt!
+                        </p>
                     </div>
                 </div>
             `;
             
             document.body.appendChild(afkOverlay);
+            
+            // Event Listeners hinzufügen
+            document.getElementById('afkCloseBtn').addEventListener('click', closeAfkMode);
+            document.getElementById('afkHelpBtn').addEventListener('click', showAfkHelp);
+            
             startAfkTimer();
             startTokenRain();
         }
@@ -3432,16 +3465,16 @@
                     timerEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
                 }
                 
-                // Progress Ring aktualisieren (60 Sekunden = voller Kreis)
-                const progress = (afkSeconds % 60) / 60;
+                // Progress Ring aktualisieren (basierend auf afkMinSeconds)
+                const progress = (afkSeconds % settings.afkMinSeconds) / settings.afkMinSeconds;
                 const progressCircle = document.getElementById('afkProgressCircle');
                 if (progressCircle) {
-                    const circumference = 439.8;
+                    const circumference = 502.4; // 2 * PI * 80
                     const offset = circumference - (progress * circumference);
                     progressCircle.style.strokeDashoffset = offset;
                 }
                 
-                // Tokens vergeben (jede Minute)
+                // Tokens vergeben
                 if (afkSeconds > 0 && afkSeconds % settings.afkMinSeconds === 0) {
                     await giveAfkTokens();
                 }
@@ -3501,34 +3534,75 @@
             const container = document.getElementById('tokenRainContainer');
             if (!container) return;
             
-            for (let i = 0; i < 10; i++) {
+            // Großer Burst-Effekt
+            for (let i = 0; i < 20; i++) {
                 const token = document.createElement('div');
-                token.className = 'absolute text-yellow-400 text-xl animate-ping';
+                token.className = 'absolute text-yellow-400 pointer-events-none';
+                token.style.fontSize = `${16 + Math.random() * 16}px`;
                 token.innerHTML = '<i class="fas fa-coins"></i>';
-                token.style.left = `${Math.random() * 100}%`;
-                token.style.top = `${40 + Math.random() * 20}%`;
+                token.style.left = '50%';
+                token.style.top = '50%';
+                token.style.transform = 'translate(-50%, -50%)';
+                token.style.opacity = '1';
+                token.style.transition = 'all 1s ease-out';
                 container.appendChild(token);
+                
+                // Animation nach außen
+                const angle = (i / 20) * 360;
+                const distance = 100 + Math.random() * 100;
+                const rad = angle * (Math.PI / 180);
+                
+                setTimeout(() => {
+                    token.style.transform = `translate(calc(-50% + ${Math.cos(rad) * distance}px), calc(-50% + ${Math.sin(rad) * distance}px)) scale(0)`;
+                    token.style.opacity = '0';
+                }, 10);
                 
                 setTimeout(() => token.remove(), 1000);
             }
+            
+            // +Tokens Text Animation
+            const plusText = document.createElement('div');
+            plusText.className = 'absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl font-black text-green-400 pointer-events-none';
+            plusText.textContent = `+${DB.getSettings().afkTokensPerMinute}`;
+            plusText.style.opacity = '1';
+            plusText.style.transition = 'all 1s ease-out';
+            container.appendChild(plusText);
+            
+            setTimeout(() => {
+                plusText.style.transform = 'translate(-50%, -150%) scale(1.5)';
+                plusText.style.opacity = '0';
+            }, 10);
+            
+            setTimeout(() => plusText.remove(), 1000);
         }
 
         function startTokenRain() {
             const container = document.getElementById('tokenRainContainer');
             if (!container) return;
             
-            setInterval(() => {
-                if (!afkActive) return;
+            const rainInterval = setInterval(() => {
+                if (!afkActive) {
+                    clearInterval(rainInterval);
+                    return;
+                }
                 
                 const token = document.createElement('div');
-                token.className = 'afk-token-rain';
-                token.innerHTML = '<i class="fas fa-coins"></i>';
+                token.className = 'absolute text-yellow-400/60 pointer-events-none';
+                token.style.fontSize = `${12 + Math.random() * 12}px`;
+                token.innerHTML = Math.random() > 0.5 ? '<i class="fas fa-coins"></i>' : '<i class="fas fa-gem"></i>';
                 token.style.left = `${Math.random() * 100}%`;
-                token.style.animationDelay = `${Math.random() * 2}s`;
+                token.style.top = '-20px';
+                token.style.transition = `all ${3 + Math.random() * 2}s linear`;
                 container.appendChild(token);
                 
-                setTimeout(() => token.remove(), 5000);
-            }, 500);
+                setTimeout(() => {
+                    token.style.top = '100vh';
+                    token.style.opacity = '0';
+                    token.style.transform = `translateX(${(Math.random() - 0.5) * 100}px) rotate(${Math.random() * 360}deg)`;
+                }, 50);
+                
+                setTimeout(() => token.remove(), 6000);
+            }, 300);
         }
 
         function closeAfkMode() {
@@ -3544,6 +3618,12 @@
                 overlay.remove();
             }
             
+            // Hauptseite wieder anzeigen
+            const app = document.getElementById('app');
+            if (app) {
+                app.style.display = 'block';
+            }
+            
             // Navbar aktualisieren um neuen Token-Stand zu zeigen
             Render.app();
             
@@ -3555,42 +3635,76 @@
         function showAfkHelp() {
             const settings = DB.getSettings();
             
-            showModal(`
-                <div class="text-center">
-                    <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-purple-500/20 flex items-center justify-center">
-                        <i class="fas fa-moon text-3xl text-purple-400"></i>
-                    </div>
-                    <h2 class="text-xl font-bold mb-4">AFK Modus - Hilfe</h2>
-                </div>
-                
-                <div class="space-y-4 text-sm">
-                    <div class="bg-gray-700/50 rounded-lg p-4">
-                        <h3 class="font-bold text-green-400 mb-2"><i class="fas fa-coins mr-2"></i>Wie funktioniert es?</h3>
-                        <p class="text-gray-300">Lass einfach den AFK-Modus offen und du bekommst automatisch Tokens gutgeschrieben - ohne etwas tun zu müssen!</p>
-                    </div>
-                    
-                    <div class="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/30">
-                        <h3 class="font-bold text-yellow-400 mb-2"><i class="fas fa-clock mr-2"></i>Aktuelle Einstellungen</h3>
-                        <ul class="text-gray-300 space-y-1">
-                            <li><i class="fas fa-check text-green-400 mr-2"></i><strong>${settings.afkTokensPerMinute}</strong> Tokens pro Minute</li>
-                            <li><i class="fas fa-check text-green-400 mr-2"></i>Erste Tokens nach <strong>${settings.afkMinSeconds}</strong> Sekunden</li>
-                        </ul>
+            // Modal über dem AFK-Overlay erstellen
+            const helpModal = document.createElement('div');
+            helpModal.id = 'afk-help-modal';
+            helpModal.className = 'fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[60] p-4';
+            helpModal.innerHTML = `
+                <div class="bg-gray-800 rounded-2xl p-6 max-w-md w-full border border-purple-500/30 shadow-2xl">
+                    <div class="text-center">
+                        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center shadow-lg shadow-purple-500/30">
+                            <i class="fas fa-gamepad text-3xl text-white"></i>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-2 text-white">AFK Token Farm</h2>
+                        <p class="text-purple-300 mb-4">So funktioniert's</p>
                     </div>
                     
-                    <div class="bg-blue-500/10 rounded-lg p-4 border border-blue-500/30">
-                        <h3 class="font-bold text-blue-400 mb-2"><i class="fas fa-lightbulb mr-2"></i>Tipps</h3>
-                        <ul class="text-gray-300 space-y-1 list-disc list-inside">
-                            <li>Tab offen lassen während du anderes machst</li>
-                            <li>Fenster muss nicht im Fokus sein</li>
-                            <li>Tokens werden sofort gutgeschrieben</li>
-                        </ul>
+                    <div class="space-y-4 text-sm">
+                        <div class="bg-green-500/10 rounded-xl p-4 border border-green-500/30">
+                            <h3 class="font-bold text-green-400 mb-2"><i class="fas fa-coins mr-2"></i>Tokens sammeln</h3>
+                            <p class="text-gray-300">Lass diese Seite einfach offen und du bekommst automatisch Tokens - ganz ohne etwas zu tun!</p>
+                        </div>
+                        
+                        <div class="bg-yellow-500/10 rounded-xl p-4 border border-yellow-500/30">
+                            <h3 class="font-bold text-yellow-400 mb-2"><i class="fas fa-chart-line mr-2"></i>Aktuelle Rate</h3>
+                            <div class="flex items-center justify-between text-gray-300 mt-2">
+                                <span>Tokens pro Runde:</span>
+                                <span class="font-bold text-yellow-400">+${settings.afkTokensPerMinute}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-gray-300 mt-1">
+                                <span>Runden-Dauer:</span>
+                                <span class="font-bold text-yellow-400">${settings.afkMinSeconds} Sekunden</span>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-blue-500/10 rounded-xl p-4 border border-blue-500/30">
+                            <h3 class="font-bold text-blue-400 mb-2"><i class="fas fa-magic mr-2"></i>Pro-Tipps</h3>
+                            <ul class="text-gray-300 space-y-2">
+                                <li class="flex items-start gap-2">
+                                    <i class="fas fa-check text-green-400 mt-1"></i>
+                                    <span>Tab minimieren geht auch!</span>
+                                </li>
+                                <li class="flex items-start gap-2">
+                                    <i class="fas fa-check text-green-400 mt-1"></i>
+                                    <span>Tokens werden sofort gutgeschrieben</span>
+                                </li>
+                                <li class="flex items-start gap-2">
+                                    <i class="fas fa-check text-green-400 mt-1"></i>
+                                    <span>Perfekt für Multitasking</span>
+                                </li>
+                            </ul>
+                        </div>
                     </div>
+                    
+                    <button id="closeAfkHelpBtn" class="w-full mt-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-xl font-bold transition-all transform hover:scale-[1.02]">
+                        <i class="fas fa-thumbs-up mr-2"></i>Verstanden!
+                    </button>
                 </div>
-                
-                <button onclick="closeModal()" class="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-bold">
-                    <i class="fas fa-check mr-2"></i>Verstanden!
-                </button>
-            `);
+            `;
+            
+            document.body.appendChild(helpModal);
+            
+            // Close button event
+            document.getElementById('closeAfkHelpBtn').addEventListener('click', () => {
+                helpModal.remove();
+            });
+            
+            // Click outside to close
+            helpModal.addEventListener('click', (e) => {
+                if (e.target === helpModal) {
+                    helpModal.remove();
+                }
+            });
         }
 
         // ============ LEGAL PAGES ============
