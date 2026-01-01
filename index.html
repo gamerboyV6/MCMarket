@@ -222,6 +222,90 @@
             justify-content: center;
             cursor: pointer;
         }
+
+        /* ============ AFK BEREICH ============ */
+        .afk-container {
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0d1b2a 100%);
+            min-height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .afk-stars {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, #eee, transparent),
+                radial-gradient(2px 2px at 40px 70px, rgba(255,255,255,0.8), transparent),
+                radial-gradient(1px 1px at 90px 40px, #fff, transparent),
+                radial-gradient(2px 2px at 160px 120px, rgba(255,255,255,0.9), transparent),
+                radial-gradient(1px 1px at 230px 80px, #eee, transparent),
+                radial-gradient(2px 2px at 300px 150px, #fff, transparent),
+                radial-gradient(1px 1px at 350px 200px, rgba(255,255,255,0.7), transparent),
+                radial-gradient(2px 2px at 420px 100px, #eee, transparent);
+            background-size: 500px 500px;
+            animation: twinkle 8s ease-in-out infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        .afk-floating {
+            animation: float 6s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .afk-pulse {
+            animation: afkPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes afkPulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.3); }
+            50% { box-shadow: 0 0 40px rgba(34, 197, 94, 0.6), 0 0 60px rgba(34, 197, 94, 0.3); }
+        }
+
+        .afk-token-rain {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            color: #fbbf24;
+            animation: tokenRain 3s linear infinite;
+            opacity: 0;
+        }
+
+        @keyframes tokenRain {
+            0% { transform: translateY(-20px); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(100vh); opacity: 0; }
+        }
+
+        .afk-glow-text {
+            text-shadow: 0 0 10px rgba(34, 197, 94, 0.5), 0 0 20px rgba(34, 197, 94, 0.3);
+        }
+
+        .afk-counter {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(180deg, #22c55e, #16a34a);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .afk-progress-ring {
+            transform: rotate(-90deg);
+        }
+
+        .afk-progress-ring circle {
+            transition: stroke-dashoffset 1s linear;
+        }
     </style>
 </head>
 <body class="gradient-bg min-h-screen text-white">
@@ -273,8 +357,17 @@
             requireApproval: true,
             registrationEnabled: true,
             maintenanceMode: false,
-            welcomeTokens: 50
+            welcomeTokens: 50,
+            afkEnabled: true,
+            afkTokensPerMinute: 5,
+            afkMinSeconds: 60
         };
+
+        // ============ AFK STATE ============
+        let afkInterval = null;
+        let afkSeconds = 0;
+        let afkTokensEarned = 0;
+        let afkActive = false;
 
         // ============ LOADING HELPERS ============
         function setLoadingStatus(text) {
@@ -345,7 +438,10 @@
                             requireApproval: settings.require_approval,
                             registrationEnabled: settings.registration_enabled,
                             maintenanceMode: settings.maintenance_mode,
-                            welcomeTokens: settings.welcome_tokens
+                            welcomeTokens: settings.welcome_tokens,
+                            afkEnabled: settings.afk_enabled !== false,
+                            afkTokensPerMinute: settings.afk_tokens_per_minute || 5,
+                            afkMinSeconds: settings.afk_min_seconds || 60
                         };
                     }
                     
@@ -1036,6 +1132,15 @@
                                     </div>
                                 </div>
                                 <div class="flex items-center space-x-4">
+                                    <!-- AFK Button -->
+                                    ${settings.afkEnabled && !isAdmin ? `
+                                        <button onclick="openAfkMode()" class="flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r from-purple-600/30 to-blue-600/30 border border-purple-500/50 hover:from-purple-600/50 hover:to-blue-600/50 transition group">
+                                            <i class="fas fa-moon text-purple-400 group-hover:text-purple-300"></i>
+                                            <span class="hidden md:inline text-purple-300">AFK</span>
+                                            <span class="text-xs text-yellow-400 font-bold">+${settings.afkTokensPerMinute}/min</span>
+                                        </button>
+                                    ` : ''}
+
                                     <button onclick="showNotificationsModal()" class="relative p-2 hover:bg-gray-700 rounded-lg transition">
                                         <i class="fas fa-bell text-gray-400"></i>
                                         ${unreadNotifs > 0 ? `<span class="notification-badge">${unreadNotifs}</span>` : ''}
@@ -2306,6 +2411,37 @@
                                     </p>
                                 </div>
                             </div>
+
+                            <!-- AFK Einstellungen -->
+                            <div class="border-t border-gray-700 pt-6">
+                                <h4 class="font-bold mb-4"><i class="fas fa-moon mr-2 text-purple-400"></i>AFK-Modus Einstellungen</h4>
+                                
+                                <div class="mb-4">
+                                    <label class="flex items-center justify-between p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg cursor-pointer">
+                                        <span><i class="fas fa-moon mr-2 text-purple-400"></i>AFK-Modus aktiviert</span>
+                                        <input type="checkbox" id="settingAfkEnabled" ${settings.afkEnabled !== false ? 'checked' : ''} onchange="updateAdminSetting('afkEnabled', this.checked)" class="w-5 h-5 accent-purple-500">
+                                    </label>
+                                </div>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm text-gray-400 mb-2">Tokens pro Minute</label>
+                                        <input type="number" id="settingAfkTokens" value="${settings.afkTokensPerMinute || 5}" onchange="updateAdminSetting('afkTokensPerMinute', parseInt(this.value) || 5)" class="w-full px-4 py-3 bg-gray-700 rounded-lg" min="1" max="100">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-gray-400 mb-2">Sekunden bis erste Tokens</label>
+                                        <input type="number" id="settingAfkSeconds" value="${settings.afkMinSeconds || 60}" onchange="updateAdminSetting('afkMinSeconds', parseInt(this.value) || 60)" class="w-full px-4 py-3 bg-gray-700 rounded-lg" min="10" max="300">
+                                    </div>
+                                </div>
+                                
+                                <div class="mt-4 p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                                    <p class="text-sm text-purple-300">
+                                        <i class="fas fa-info-circle mr-2"></i>
+                                        <strong>AFK-Modus:</strong> User können im AFK-Bereich alle <strong>${settings.afkMinSeconds || 60}</strong> Sekunden 
+                                        <strong>${settings.afkTokensPerMinute || 5}</strong> Tokens verdienen, indem sie einfach das Fenster offen lassen.
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     `;
                     break;
@@ -3153,7 +3289,10 @@
                 require_approval: settings.requireApproval,
                 registration_enabled: settings.registrationEnabled,
                 maintenance_mode: settings.maintenanceMode,
-                welcome_tokens: settings.welcomeTokens
+                welcome_tokens: settings.welcomeTokens,
+                afk_enabled: settings.afkEnabled,
+                afk_tokens_per_minute: settings.afkTokensPerMinute,
+                afk_min_seconds: settings.afkMinSeconds
             };
             
             const { error } = await getSupabase()
@@ -3168,6 +3307,290 @@
                 console.error('Settings update error:', error);
                 Utils.showToast('Fehler beim Speichern', 'error');
             }
+        }
+
+        // ============ AFK FUNCTIONS ============
+        function openAfkMode() {
+            const user = DB.getCurrentUser();
+            const settings = DB.getSettings();
+            
+            if (!user || DB.isAdmin(user)) {
+                Utils.showToast('AFK-Modus nicht verfügbar', 'error');
+                return;
+            }
+
+            if (!settings.afkEnabled) {
+                Utils.showToast('AFK-Modus ist deaktiviert', 'error');
+                return;
+            }
+
+            // AFK-Seite erstellen
+            const afkOverlay = document.createElement('div');
+            afkOverlay.id = 'afk-overlay';
+            afkOverlay.className = 'fixed inset-0 z-50';
+            afkOverlay.innerHTML = `
+                <div class="afk-container flex flex-col items-center justify-center p-4">
+                    <!-- Sterne Hintergrund -->
+                    <div class="afk-stars"></div>
+                    <div class="afk-stars" style="animation-delay: -2s;"></div>
+                    
+                    <!-- Token Rain Container -->
+                    <div id="tokenRainContainer" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+                    
+                    <!-- Hauptinhalt -->
+                    <div class="relative z-10 text-center max-w-lg w-full">
+                        <!-- Hilfe Button -->
+                        <button onclick="showAfkHelp()" class="absolute top-4 right-4 w-10 h-10 bg-gray-800/50 hover:bg-gray-700 rounded-full flex items-center justify-center transition">
+                            <i class="fas fa-question text-gray-400"></i>
+                        </button>
+                        
+                        <!-- Schließen Button -->
+                        <button onclick="closeAfkMode()" class="absolute top-4 left-4 px-4 py-2 bg-red-600/80 hover:bg-red-600 rounded-lg transition flex items-center">
+                            <i class="fas fa-times mr-2"></i>Beenden
+                        </button>
+                        
+                        <!-- Floating Icon -->
+                        <div class="afk-floating mb-8">
+                            <div class="w-32 h-32 mx-auto rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center afk-pulse">
+                                <i class="fas fa-moon text-6xl text-white"></i>
+                            </div>
+                        </div>
+                        
+                        <!-- Titel -->
+                        <h1 class="text-4xl font-bold mb-2 afk-glow-text">AFK Modus</h1>
+                        <p class="text-gray-400 mb-8">Entspanne dich und verdiene Tokens!</p>
+                        
+                        <!-- Token Info Box -->
+                        <div class="bg-gray-800/60 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-purple-500/30">
+                            <div class="flex items-center justify-center gap-2 mb-4">
+                                <i class="fas fa-coins text-2xl text-yellow-400"></i>
+                                <span class="text-yellow-400 text-xl font-bold">+${settings.afkTokensPerMinute} Tokens pro Minute</span>
+                            </div>
+                            
+                            <!-- Progress Ring -->
+                            <div class="relative w-40 h-40 mx-auto mb-4">
+                                <svg class="afk-progress-ring w-full h-full">
+                                    <circle cx="80" cy="80" r="70" stroke="#374151" stroke-width="8" fill="none"/>
+                                    <circle id="afkProgressCircle" cx="80" cy="80" r="70" stroke="#22c55e" stroke-width="8" fill="none" 
+                                        stroke-dasharray="439.8" stroke-dashoffset="439.8" stroke-linecap="round"/>
+                                </svg>
+                                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span id="afkTimer" class="text-3xl font-bold afk-counter">0:00</span>
+                                    <span class="text-xs text-gray-400">Zeit</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Verdiente Tokens -->
+                            <div class="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-xl p-4 border border-yellow-500/30">
+                                <p class="text-sm text-gray-400 mb-1">Verdient in dieser Session</p>
+                                <div class="flex items-center justify-center gap-2">
+                                    <i class="fas fa-coins text-yellow-400"></i>
+                                    <span id="afkEarnedTokens" class="text-3xl font-bold text-yellow-400">0</span>
+                                    <span class="text-yellow-400">Tokens</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Info -->
+                        <p class="text-gray-500 text-sm">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Lass dieses Fenster offen um Tokens zu verdienen
+                        </p>
+                        
+                        <!-- Dein Token-Stand -->
+                        <div class="mt-6 px-4 py-2 bg-gray-800/40 rounded-lg inline-block">
+                            <span class="text-gray-400">Dein Guthaben: </span>
+                            <span id="afkTotalTokens" class="font-bold text-yellow-400">${Utils.formatTokens(user.tokens)}</span>
+                            <span class="text-gray-400"> Tokens</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(afkOverlay);
+            startAfkTimer();
+            startTokenRain();
+        }
+
+        function startAfkTimer() {
+            const settings = DB.getSettings();
+            afkSeconds = 0;
+            afkTokensEarned = 0;
+            afkActive = true;
+            
+            // Update UI jede Sekunde
+            afkInterval = setInterval(async () => {
+                if (!afkActive) return;
+                
+                afkSeconds++;
+                
+                // Timer aktualisieren
+                const minutes = Math.floor(afkSeconds / 60);
+                const seconds = afkSeconds % 60;
+                const timerEl = document.getElementById('afkTimer');
+                if (timerEl) {
+                    timerEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                }
+                
+                // Progress Ring aktualisieren (60 Sekunden = voller Kreis)
+                const progress = (afkSeconds % 60) / 60;
+                const progressCircle = document.getElementById('afkProgressCircle');
+                if (progressCircle) {
+                    const circumference = 439.8;
+                    const offset = circumference - (progress * circumference);
+                    progressCircle.style.strokeDashoffset = offset;
+                }
+                
+                // Tokens vergeben (jede Minute)
+                if (afkSeconds > 0 && afkSeconds % settings.afkMinSeconds === 0) {
+                    await giveAfkTokens();
+                }
+            }, 1000);
+        }
+
+        async function giveAfkTokens() {
+            const user = DB.getCurrentUser();
+            const settings = DB.getSettings();
+            
+            if (!user || DB.isAdmin(user)) return;
+            
+            const tokensToGive = settings.afkTokensPerMinute;
+            const newTokens = (user.tokens || 0) + tokensToGive;
+            
+            // In Datenbank speichern
+            const { error } = await getSupabase()
+                .from('profiles')
+                .update({ 
+                    tokens: newTokens,
+                    total_afk_earned: (user.total_afk_earned || 0) + tokensToGive,
+                    last_afk_claim: new Date().toISOString()
+                })
+                .eq('id', user.id);
+            
+            if (!error) {
+                currentUserData.tokens = newTokens;
+                afkTokensEarned += tokensToGive;
+                
+                // Transaktion speichern
+                await getSupabase().from('transactions').insert({
+                    user_id: user.id,
+                    type: 'afk_earn',
+                    amount: tokensToGive,
+                    description: 'AFK Token-Belohnung'
+                });
+                
+                // UI aktualisieren
+                const earnedEl = document.getElementById('afkEarnedTokens');
+                if (earnedEl) {
+                    earnedEl.textContent = afkTokensEarned;
+                    earnedEl.classList.add('scale-125');
+                    setTimeout(() => earnedEl.classList.remove('scale-125'), 200);
+                }
+                
+                const totalEl = document.getElementById('afkTotalTokens');
+                if (totalEl) {
+                    totalEl.textContent = Utils.formatTokens(newTokens);
+                }
+                
+                // Visuelles Feedback
+                createTokenBurst();
+            }
+        }
+
+        function createTokenBurst() {
+            const container = document.getElementById('tokenRainContainer');
+            if (!container) return;
+            
+            for (let i = 0; i < 10; i++) {
+                const token = document.createElement('div');
+                token.className = 'absolute text-yellow-400 text-xl animate-ping';
+                token.innerHTML = '<i class="fas fa-coins"></i>';
+                token.style.left = `${Math.random() * 100}%`;
+                token.style.top = `${40 + Math.random() * 20}%`;
+                container.appendChild(token);
+                
+                setTimeout(() => token.remove(), 1000);
+            }
+        }
+
+        function startTokenRain() {
+            const container = document.getElementById('tokenRainContainer');
+            if (!container) return;
+            
+            setInterval(() => {
+                if (!afkActive) return;
+                
+                const token = document.createElement('div');
+                token.className = 'afk-token-rain';
+                token.innerHTML = '<i class="fas fa-coins"></i>';
+                token.style.left = `${Math.random() * 100}%`;
+                token.style.animationDelay = `${Math.random() * 2}s`;
+                container.appendChild(token);
+                
+                setTimeout(() => token.remove(), 5000);
+            }, 500);
+        }
+
+        function closeAfkMode() {
+            afkActive = false;
+            
+            if (afkInterval) {
+                clearInterval(afkInterval);
+                afkInterval = null;
+            }
+            
+            const overlay = document.getElementById('afk-overlay');
+            if (overlay) {
+                overlay.remove();
+            }
+            
+            // Navbar aktualisieren um neuen Token-Stand zu zeigen
+            Render.app();
+            
+            if (afkTokensEarned > 0) {
+                Utils.showToast(`+${afkTokensEarned} Tokens verdient im AFK-Modus!`);
+            }
+        }
+
+        function showAfkHelp() {
+            const settings = DB.getSettings();
+            
+            showModal(`
+                <div class="text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-purple-500/20 flex items-center justify-center">
+                        <i class="fas fa-moon text-3xl text-purple-400"></i>
+                    </div>
+                    <h2 class="text-xl font-bold mb-4">AFK Modus - Hilfe</h2>
+                </div>
+                
+                <div class="space-y-4 text-sm">
+                    <div class="bg-gray-700/50 rounded-lg p-4">
+                        <h3 class="font-bold text-green-400 mb-2"><i class="fas fa-coins mr-2"></i>Wie funktioniert es?</h3>
+                        <p class="text-gray-300">Lass einfach den AFK-Modus offen und du bekommst automatisch Tokens gutgeschrieben - ohne etwas tun zu müssen!</p>
+                    </div>
+                    
+                    <div class="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/30">
+                        <h3 class="font-bold text-yellow-400 mb-2"><i class="fas fa-clock mr-2"></i>Aktuelle Einstellungen</h3>
+                        <ul class="text-gray-300 space-y-1">
+                            <li><i class="fas fa-check text-green-400 mr-2"></i><strong>${settings.afkTokensPerMinute}</strong> Tokens pro Minute</li>
+                            <li><i class="fas fa-check text-green-400 mr-2"></i>Erste Tokens nach <strong>${settings.afkMinSeconds}</strong> Sekunden</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="bg-blue-500/10 rounded-lg p-4 border border-blue-500/30">
+                        <h3 class="font-bold text-blue-400 mb-2"><i class="fas fa-lightbulb mr-2"></i>Tipps</h3>
+                        <ul class="text-gray-300 space-y-1 list-disc list-inside">
+                            <li>Tab offen lassen während du anderes machst</li>
+                            <li>Fenster muss nicht im Fokus sein</li>
+                            <li>Tokens werden sofort gutgeschrieben</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <button onclick="closeModal()" class="w-full mt-4 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-bold">
+                    <i class="fas fa-check mr-2"></i>Verstanden!
+                </button>
+            `);
         }
 
         // ============ LEGAL PAGES ============
